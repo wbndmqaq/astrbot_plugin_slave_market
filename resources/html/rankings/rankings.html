@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>排行榜</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            font-size: 2.5em;
+            margin-bottom: 30px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 10px;
+            margin-top: 20px;
+        }
+
+        th,
+        td {
+            padding: 15px;
+            text-align: left;
+            background-color: #fff;
+        }
+
+        th {
+            background-color: #3498db;
+            color: #fff;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        tr {
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        tr:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .player-info {
+            display: flex;
+            align-items: center;
+        }
+
+        .avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            margin-right: 15px;
+            object-fit: cover;
+        }
+
+        .nickname {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .qq {
+            font-size: 0.8em;
+            color: #7f8c8d;
+        }
+
+        .rank {
+            font-weight: bold;
+            color: #e74c3c;
+        }
+
+        .value {
+            font-weight: bold;
+            color: #27ae60;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>{{type}}排行榜</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>排名</th>
+                <th>玩家</th>
+                <th>{{type}}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{each info item}}
+            <tr>
+                <td class="rank">{{item.rank}}</td>
+                <td>
+                    <div class="player-info">
+                        <img src="http://q1.qlogo.cn/g?b=qq&nk={{item.id}}&s=100" alt="QQ头像" class="avatar">
+                        <div>
+                            <div class="nickname">{{item.nickname}}</div>
+                            <div class="qq">QQ: {{item.id}}</div>
+                        </div>
+                    </div>
+                </td>
+                <td class="value">{{item.value}}</td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+</body>
+
+</html>

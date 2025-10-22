@@ -1,0 +1,24 @@
+# AstrBot 奴隶市场插件依赖列表
+# 基于AstrBot官方插件开发标准
+
+# 基础依赖 - 确保与AstrBot兼容
+pyyaml>=6.0.1
+jinja2>=3.1.2
+
+# 数据处理
+python-dateutil>=2.8.2
+
+# 异步支持
+aiofiles>=23.2.1
+
+# 图像处理（用于HTML渲染）
+pillow>=10.0.0
+
+# 浏览器自动化（用于HTML渲染）
+playwright>=1.40.0
+
+# 类型提示
+typing-extensions>=4.8.0
+
+# 工具库
+packaging>=23.2

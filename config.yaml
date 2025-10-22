@@ -1,0 +1,83 @@
+# 奴隶市场插件配置文件
+
+# 回购设置
+buyBack:
+  cooldown: 86400     # 回购冷却时间（秒）
+  maxTimes: 3         # 最大回购次数
+  taxRate: 0.05        # 回购税率
+
+# 抢劫设置
+rob:
+  cooldown: 600       # 抢劫冷却时间（秒）
+  successRate: 0.3    # 抢劫成功率
+  penalty: 0.1         # 抢劫失败惩罚
+
+# 工作设置
+work:
+  cooldown: 3600      # 工作冷却时间（秒）
+  slaveownerCooldown: 60  # 奴隶主冷却时间（秒）
+
+# 购买设置
+purchase:
+  cooldown: 3600       # 购买冷却时间（秒）
+
+# 银行设置
+bank:
+  initialLimit: 1000   # 初始银行限额
+  initialLevel: 1      # 初始等级
+  upgradePriceMulti: 1.2  # 升级价格倍数
+  limitIncreaseMulti: 1.25 # 限额增长倍数
+  initialUpgradePrice: 100  # 初始升级价格
+  interestRate: 0.01      # 每小时利息率(1%)
+  maxInterestTime: 24      # 最大计息时间(小时)
+
+# 训练设置
+training:
+  cooldown: 7200           # 训练冷却时间（秒）
+  successRate: 0.7         # 训练成功率
+  costRate: 0.1            # 训练费用比例（基于奴隶价值）
+  valueIncreaseRate: 0.2    # 训练成功时价值提升比例
+
+# 竞技场设置
+arena:
+  cooldown: 7200          # 竞技冷却时间（秒）
+  entryFee: 50            # 参赛费用
+  rewardRate: 0.2         # 获胜奖励比例（基于参赛费用）
+  valueBonus: 0.1          # 获胜者价值提升比例
+
+# 排位赛设置
+ranking:
+  cooldown: 3600          # 排位赛冷却时间（秒）
+  baseReward: 10          # 基础奖励金币
+  winBonus: 0.2           # 胜利额外奖励比例
+  tierBonus:              # 段位额外奖励
+    '青铜': 1
+    '白银': 1.2
+    '黄金': 1.5
+    '铂金': 2
+    '钻石': 3
+
+# 转账设置
+transfer:
+  feeRate: 0.1       # 手续费率
+  minAmount: 100      # 最低转账金额
+
+# 抢劫设置
+rob:
+  cooldown: 600       # 抢劫冷却时间（秒）
+  successRate: 0.3    # 抢劫成功率
+  penalty: 0.1         # 抢劫失败惩罚
+
+# 忽略冷却时间的用户ID列表
+ignoreCDUsers: []
+
+# 每周重置设置
+weeklyReset:
+  enabled: true      # 是否启用每周重置
+  resetTime:         # 重置时间（周一00:00）
+    day: 1           # 星期一 (0=周日, 1=周一, ..., 6=周六)
+    hour: 0          # 小时 (0-23)
+    minute: 0         # 分钟 (0-59)
+  preserveData:      # 重置时保留的数据
+    nickname: true   # 保留昵称
+    basicValue: 100   # 重置后的基础身价

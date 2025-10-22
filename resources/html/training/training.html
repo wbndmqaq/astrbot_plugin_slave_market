@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>训练结果报告</title>
+    <link rel="stylesheet" type="text/css" href="{{filePath}}html/training/training.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>训练结果报告</h1>
+        </header>
+        <section class="summary">
+            <div class="summary-item">
+                <span class="summary-label">总奴隶数</span>
+                <span class="summary-value">{{summary.totalSlaves}}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">成功</span>
+                <span class="summary-value success">{{summary.successCount}}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">失败</span>
+                <span class="summary-value failed">{{summary.failCount}}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">总花费</span>
+                <span class="summary-value">{{summary.totalCost}}金币</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">剩余金币</span>
+                <span class="summary-value">{{summary.remainingCurrency}}</span>
+            </div>
+        </section>
+        <main class="results">
+            {{each results result}}
+            <article class="result-card {{result.status}}">
+                <div class="card-content">
+                    <img class="avatar" src="{{result.avatar}}" alt="{{result.name}}">
+                    <div class="info">
+                        <h2 class="name">{{result.name}}</h2>
+                        <p class="result-text">{{result.result}}</p>
+                        {{if result.valueChange > 0}}
+                        <p class="value-change">身价 +{{result.valueChange}}</p>
+                        {{/if}}
+                        {{if result.remainingTime}}
+                        <p class="cooldown">剩余CD：{{result.remainingTime}}</p>
+                        {{/if}}
+                        <p class="current-value">当前身价：{{result.currentValue}}</p>
+                    </div>
+                </div>
+            </article>
+            {{/each}}
+        </main>
+    </div>
+</body>
+
+</html>

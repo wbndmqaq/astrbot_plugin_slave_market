@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>群友打工报告</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+            color: #666;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+
+        .work-report {
+            background-color: #f0f0f0;
+            border-left: 4px solid #4CAF50;
+            margin-bottom: 15px;
+            padding: 10px;
+        }
+
+        .username {
+            color: #1e88e5;
+            font-weight: bold;
+        }
+
+        .income {
+            color: #43a047;
+            font-weight: bold;
+        }
+
+        .summary {
+            font-weight: bold;
+            margin-top: 20px;
+            color: #333;
+        }
+
+        .total-income {
+            color: #e53935;
+        }
+
+        .current-balance {
+            color: #ffa000;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>群友打工报告</h1>
+    {{each workData item}}
+    <div class="work-report">
+        <p><span class="username">【{{item.name}}】</span>{{item.work}}<span class="income">{{item.income}}</span></p>
+    </div>
+    {{/each}}
+
+    <p class="summary">你总共获取<span class="total-income">{{wages}}金币</span>，当前共有<span
+            class="current-balance">{{assets}}金币</span></p>
+</body>
+
+</html>
