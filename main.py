@@ -281,17 +281,6 @@ class SlaveMarketPlugin(Star):
             logger.info(f"创建新玩家数据: 群{group_id} 用户{user_id}")
         return data
 
-    def format_currency(self, amount: int) -> str:
-        """格式化货币显示
-
-        Args:
-            amount: 金额
-
-        Returns:
-            str: 格式化后的货币字符串
-        """
-        return f"{amount:,} 金币"
-
     def check_cooldown(self, data: Dict[str, Any], action: str, cooldown: int) -> bool:
         """检查冷却时间
 
@@ -329,18 +318,6 @@ class SlaveMarketPlugin(Star):
         """
         ignore_users = self.config.get("ignoreCDUsers", [])
         return str(user_id) in [str(uid) for uid in ignore_users]
-
-    def format_currency(self, amount: int) -> str:
-        """
-        格式化货币显示
-
-        Args:
-            amount: 金额
-
-        Returns:
-            str: 格式化后的货币字符串
-        """
-        return f"{amount:,} 金币"
 
     def get_all_players(self, group_id: str) -> List[str]:
         """获取群组内所有玩家ID列表
@@ -483,8 +460,8 @@ class SlaveMarketPlugin(Star):
 
         reply = "🌟 奴隶市场 🌟\n\n"
         reply += f"👤 {user.get('nickname', '未知用户')} 的信息\n"
-        reply += f"💰 金币: {self.format_currency(user.get('currency', 0))}\n"
-        reply += f"💎 身价: {user.get('value', 0)}\n"
+        reply += f"💰 金币: {user.get('currency', 0):,} 金币\n"
+        reply += f"💎 身价: {user.get('value', 0):,}\n"
         reply += f"👥 奴隶数量: {len(slaves)}\n"
 
         if slaves:
@@ -664,8 +641,8 @@ class SlaveMarketPlugin(Star):
 
             # 构建回复消息
             reply = f"👤 {nickname} 的信息\n"
-            reply += f"💰 金币: {self.format_currency(data['currency'])}\n"
-            reply += f"💎 身价: {data['value']}\n"
+            reply += f"💰 金币: {data.get('currency', 0):,} 金币\n"
+            reply += f"💎 身价: {data.get('value', 0):,}\n"
             reply += f"👥 奴隶数量: {len(data.get('slaves', []))}\n"
 
             if data.get("slaves"):
