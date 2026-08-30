@@ -1,6 +1,6 @@
 # astrbot_plugin_slave_market
 
-由 Yunzai 插件 [Slave-Market](https://gitee.com/Tloml-Starry/Slave-Market)（木兰 PSL 2.0）移植的 AstrBot 群互动经营游戏「奴隶市场」。
+由 Yunzai 插件 [Slave-Market](https://gitee.com/Tloml-Starry/Slave-Market) 移植的 AstrBot 群互动经营游戏「奴隶市场」。
 
 购买群友当奴隶、让奴隶打工赚金币、训练/决斗/排位赛抬身价、银行存取款吃利息、抢劫与赎身。SQLite 单文件存储，全部输出经独立 Playwright 渲染器以 HTML 模板出图，附独立端口 WebUI 管理面板。
 
@@ -91,4 +91,4 @@ astrbot_plugin_slave_market/
 
 ## License
 
-木兰宽松许可证 第2版（Mulan PSL 2.0），继承自原项目。
+木兰宽松许可证 第2版
