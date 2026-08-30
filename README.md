@@ -2,7 +2,7 @@
   <img src="logo.png" width="120" alt="logo">
 </p>
 
-<h1 align="center">奴隶市场t</h1>
+<h1 align="center">奴隶市场</h1>
 
 由 Yunzai 插件 [Slave-Market](https://gitee.com/Tloml-Starry/Slave-Market) 移植的 AstrBot 群互动经营游戏「奴隶市场」。
 
