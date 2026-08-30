@@ -14,17 +14,13 @@ desc: |-
   - 存款 N / 一键存款 / 取款 N / 银行信息 / 领取利息 / 升级信用 / 一键升级信用 / 转账 N @某人
   - 奴隶备份 / 奴隶备份列表 / 奴隶恢复备份 N / 奴隶删除备份 N（管理员）
 version: 1.0.0
-author: Tloml-Starry (AstrBot 移植版)
-repo: https://gitee.com/Tloml-Starry/Slave-Market
+author: wbndm
+repo: https://github.com/wbndmqaq/astrbot_plugin_slave_market
 astrbot_version: ">=4.9.2"
 tags:
   - 游戏
   - 互动
+  - 奴隶
 support_platforms:
   - aiocqhttp
   - qq_official
-  - telegram
-  - lark
-  - discord
-  - slack
-  - kook
