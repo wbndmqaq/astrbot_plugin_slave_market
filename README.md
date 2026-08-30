@@ -1,8 +1,20 @@
-# astrbot_plugin_slave_market
+<p align="center">  
+  <img src="logo.png" width="120" alt="logo">
+</p>
+
+<h1 align="center">astrbot_plugin_slave_market</h1>
 
 由 Yunzai 插件 [Slave-Market](https://gitee.com/Tloml-Starry/Slave-Market) 移植的 AstrBot 群互动经营游戏「奴隶市场」。
 
 购买群友当奴隶、让奴隶打工赚金币、训练/决斗/排位赛抬身价、银行存取款吃利息、抢劫与赎身。SQLite 单文件存储，全部输出经独立 Playwright 渲染器以 HTML 模板出图，附独立端口 WebUI 管理面板。
+
+---
+
+## 安装方式：WebUI 插件市场
+
+AstrBot WebUI → 插件管理 → 搜索 `astrbot_plugin_slave_market` → 安装。
+
+---
 
 ## 架构
 
@@ -34,11 +46,70 @@ astrbot_plugin_slave_market/
 
 新增一条指令的步骤：在 `core/service.py` 写服务函数返回 `R`，在 `handlers/` 对应域文件写 `async run(ctx, event)` 并追加一条 `Route(pattern, name, doc, run)`。
 
-## 依赖
+---
 
-- `playwright`（需执行一次 `python -m playwright install chromium`）
-- `jinja2`、`aiohttp`
-- 渲染失败或关闭 `use_image` 时自动回退纯文本，不中断指令。
+### 卡片渲染环境安装教程（可选，不影响文字回复）
+
+卡片渲染基于本地 Playwright 截图实现。出于安全考虑，插件**绝不会**自动执行任何系统级安装——不修改 apt 源、不运行 apt-get、不自动 pip 装包、不自动下载浏览器内核。需要图片卡片时请按下面步骤手动安装（约 1~2 分钟）：
+
+#### ① 安装 playwright Python 包
+
+```bash
+pip install playwright
+# 国内网络可用清华镜像：
+pip install playwright -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+#### ② 下载 Chromium 浏览器内核
+
+```bash
+python -m playwright install chromium
+# 国内网络可用 npmmirror 加速：
+PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ python -m playwright install chromium
+```
+
+Windows PowerShell 写法：
+
+```powershell
+$env:PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright/"
+python -m playwright install chromium
+```
+
+#### ③（仅 Linux / Docker 容器）安装系统运行库
+
+仅当启动渲染时报 `libnspr4` / `libnss3` / `error while loading shared libraries` 才需要，需 root：
+
+```bash
+python -m playwright install-deps chromium
+```
+
+或手动安装系统库：
+
+```bash
+apt-get update && apt-get install -y \
+  libnspr4 libnss3 libgbm1 libasound2 \
+  libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 libdrm2 \
+  libx11-xcb1 libxcb1 libxcomposite1 libxdamage1 libxfixes3 \
+  libxkbcommon0 libxrandr2 libxext6 libpango-1.0-0
+```
+
+容器内 apt 官方源下载慢？可选换阿里镜像源后再装：
+
+```bash
+# Debian 12 (bookworm)
+sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+# Ubuntu 22.04
+sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list
+apt-get update
+```
+
+#### ④ 重载插件
+
+WebUI → 插件管理 → 本插件 → 重载。
+
+环境未就绪时，日志会输出一次完整指引，所有指令自动回退纯文本展示；安装完成后重载即可正常出图。
+
+---
 
 ## 指令一览
 
@@ -54,6 +125,8 @@ astrbot_plugin_slave_market/
 
 前缀必须携带，`！`/`!` 均可。
 
+---
+
 ## WebUI 管理面板
 
 默认 `http://127.0.0.1:17818`，可在插件配置中改端口/监听地址/密码（非本机监听必须设置密码，否则拒绝启动）。功能：
@@ -66,11 +139,7 @@ astrbot_plugin_slave_market/
 - **文案**：在线编辑打工文案与帮助长文本并热更新（无需重载插件）；帮助文案为可视化编辑——标题、分栏卡片、条目增删与排序都是表单操作，不用手写 JSON，纯文本兜底可按分栏一键生成
 - **配置**：面板内直接修改插件配置（含嵌套配置组，密码留空保持原值）
 
-## 存储
-
-- SQLite 单文件库：`data/plugin_data/astrbot_plugin_slave_market/slave_market.db`，WAL 模式，所有读写经 `asyncio.to_thread`。
-- 删除存档先挪入 `trash` 表留档，总量按 `backup_keep` 自动裁剪；全量备份为 `backups/` 下的独立 `.db` 快照，恢复时先关连接、替换文件、惰性重连。
-- 不随插件更新被覆盖；从旧 JSON 存档版升级不会自动迁移数据（如需保留请手动迁移）。
+---
 
 ## 玩法要点
 
@@ -80,15 +149,23 @@ astrbot_plugin_slave_market/
 - **决斗/排位**：身价决定胜率，Elo 计分，段位从青铜到钻石。
 - **银行**：存款上限随信用等级提升，每小时 1% 利息（最多计 24 小时）。
 
-## 相对原版的改进
+---
 
-- **纯异步**：所有磁盘 IO（SQLite 读写、模板渲染、备份）走 `asyncio.to_thread`，不阻塞事件循环；WebUI 全部端点带全局错误中间件，异常返回 JSON 而非裸 500。
-- **并发安全**：SQLite 写事务用 `threading.RLock` 串行化（WAL 下读写互不阻塞）；每用户指令锁消除连发指令的双花窗口。
-- **无泄漏**：Playwright 渲染器懒启动、失败时显式关闭遗留实例防止孤儿进程，截图目录自动清理；数据库连接在 `terminate()` 统一关闭；回收站/备份按配置数量自动裁剪；指令锁表有容量上限；昵称缓存容量受控（超限先清过期再清最旧）。
-- **全模板渲染**：所有回复（含错误提示）经 HTML 模板出图，统一视觉，纯文本兜底。
-- **平台昵称适配**（参考 astrbot_plugin_shangbanzu）：aiocqhttp/OneBot 平台经 `get_group_member_info` 拉群名片；QQ 官方平台经 botpy 的 Route HTTP 接口探测成员昵称（灰度接口，未开放时静默负缓存）。拉取结果带 TTL 内存缓存并入库，市场/排行榜显示真实昵称；拉取失败静默，不影响指令。
-- **跨平台**：不依赖 QQ 群成员列表 API，任何 AstrBot 平台适配器均可游玩。
+##  许可证
 
-## License
+本项目采用原项目 [木兰宽松许可证 第2版](LICENSE) 开源。
 
-木兰宽松许可证 第2版
+---
+
+## 致谢
+
+- [Slave-Market（原插件）](https://gitee.com/Tloml-Starry/Slave-Market) — 群友之间的增温小游戏，购买群友来替你打工，然后买下更多群友（doge
+- [AstrBot](https://github.com/AstrBotDevs/AstrBot) — 多平台聊天机器人框架
+
+---
+
+<div align="center">
+
+如果觉得这个插件对你带来快乐，欢迎 Star 或者 PR 一下哈哈
+
+</div>
