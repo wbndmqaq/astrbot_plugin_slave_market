@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html{display:inline-block}
+body{width:620px;padding:26px;display:inline-block;color:#3e2c1b;
+  font-family:"Noto Serif SC","Source Han Serif SC","STSong","SimSun",serif;
+  background:#f5f0e1;
+  background-image:repeating-linear-gradient(0deg,rgba(181,101,29,.03) 0 1px,transparent 1px 26px),
+    radial-gradient(ellipse 900px 500px at 50% -10%,#fdf9ee 0%,#f5f0e1 70%);
+  border:3px double #b5651d;outline:6px solid #f5f0e1;box-shadow:inset 0 0 60px rgba(181,101,29,.08)}
+.vs{display:grid;grid-template-columns:1fr 64px 1fr;align-items:center;text-align:center;margin-bottom:12px}
+.fighter{background:#fdf9ee;border:1px solid #e3d5b8;border-radius:10px;padding:12px 8px}
+.fighter .name{font-size:17px;font-weight:bold;color:#8c3b2e}
+.fighter .val{font-size:12.5px;color:#9b855f;margin-top:3px}
+.fighter.left{border-left:4px solid #c67b5c}
+.fighter.right{border-right:4px solid #6b7b3c}
+.vs-mid{font-size:22px;font-weight:bold;color:#b5651d}
+.process{background:#fdf9ee;border:1px dashed #d8c49a;border-radius:8px;padding:10px 14px;
+  font-size:14.5px;line-height:1.8;text-align:center;margin-bottom:12px}
+.verdict{text-align:center;margin-bottom:12px}
+.verdict .t{font-size:20px;font-weight:bold;letter-spacing:3px;color:#8c3b2e}
+.verdict .s{font-size:13px;color:#9b855f;margin-top:3px}
+.settle{display:flex;gap:10px}
+.settle .box{flex:1;background:#fdf9ee;border:1px solid #e3d5b8;border-radius:10px;text-align:center;padding:10px}
+.settle .v{font-size:16px;font-weight:bold;color:#b5651d}
+.settle .k{font-size:11.5px;color:#9b855f;margin-top:2px}
+.up{color:#6b7b3c}.down{color:#a53f2b}
+.foot{text-align:center;color:#9b855f;font-size:12px;margin-top:14px;letter-spacing:2px}
+</style>
+</head>
+<body>
+  <div class="vs">
+    <div class="fighter left"><div class="name">{{ n1 }}</div><div class="val">身价 {{ v1 }}</div></div>
+    <div class="vs-mid">VS</div>
+    <div class="fighter right"><div class="name">{{ n2 }}</div><div class="val">身价 {{ v2 }}</div></div>
+  </div>
+  <div class="process">{% for p in process or [] %}{{ p }}<br>{% endfor %}</div>
+  <div class="verdict">
+    <div class="t">⚔️ {{ winner }} 获胜！</div>
+    <div class="s">报名费 {{ fee }} 金币 · 你获得奖励 {{ reward }} 金币</div>
+  </div>
+  <div class="settle">
+    <div class="box"><div class="v up">+{{ win_inc }} → {{ winner_value }}</div><div class="k">{{ winner }} 身价</div></div>
+    <div class="box"><div class="v down">-{{ lose_dec }} → {{ loser_value }}</div><div class="k">{{ loser }} 身价</div></div>
+    <div class="box"><div class="v">{{ wins }}胜{{ losses }}负</div><div class="k">你的战绩</div></div>
+  </div>
+  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+</body>
+</html>

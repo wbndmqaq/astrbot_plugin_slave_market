@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html{display:inline-block}
+body{width:620px;padding:26px;display:inline-block;color:#3e2c1b;
+  font-family:"Noto Serif SC","Source Han Serif SC","STSong","SimSun",serif;
+  background:#f5f0e1;
+  background-image:repeating-linear-gradient(0deg,rgba(181,101,29,.03) 0 1px,transparent 1px 26px),
+    radial-gradient(ellipse 900px 500px at 50% -10%,#fdf9ee 0%,#f5f0e1 70%);
+  border:3px double #b5651d;outline:6px solid #f5f0e1;box-shadow:inset 0 0 60px rgba(181,101,29,.08)}
+.hdr{text-align:center;margin-bottom:14px}
+h1{font-size:24px;letter-spacing:4px;color:#8c3b2e}
+.uid{color:#9b855f;font-size:12.5px;margin-top:3px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
+.stat{background:#fdf9ee;border:1px solid #e3d5b8;border-radius:10px;text-align:center;padding:11px 6px}
+.stat .v{font-size:19px;font-weight:bold;color:#b5651d}
+.stat .k{font-size:12px;color:#9b855f;margin-top:3px}
+.master{text-align:center;font-size:14.5px;color:#4a3826;background:#fdf9ee;
+  border:1px dashed #d8c49a;border-radius:8px;padding:8px;margin-bottom:12px}
+h2{font-size:16px;color:#b5651d;letter-spacing:3px;margin:6px 0 10px;display:flex;align-items:center;gap:10px}
+h2::after{content:"";flex:1;border-top:1px solid #d8c49a}
+table{width:100%;border-collapse:separate;border-spacing:0 5px}
+td{background:#fdf9ee;padding:7px 13px;font-size:14.5px}
+tr td:first-child{border-radius:8px 0 0 8px;border-left:3px solid #c67b5c}
+tr td:last-child{border-radius:0 8px 8px 0;text-align:right;color:#8c3b2e;font-weight:bold;white-space:nowrap}
+.empty{text-align:center;color:#9b855f;padding:16px 0;font-size:14.5px}
+.foot{text-align:center;color:#9b855f;font-size:12px;margin-top:14px;letter-spacing:2px}
+</style>
+</head>
+<body>
+  <div class="hdr">
+    <h1>{{ nickname }} 的奴籍账册</h1>
+    <div class="uid">ID {{ uid }}</div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="v">{{ currency }}</div><div class="k">金币</div></div>
+    <div class="stat"><div class="v">{{ value }}</div><div class="k">身价</div></div>
+    <div class="stat"><div class="v">{{ slave_count }}</div><div class="k">奴隶</div></div>
+    <div class="stat"><div class="v">{{ wins }}胜{{ losses }}负</div><div class="k">决斗战绩</div></div>
+  </div>
+  <div class="master">👤 主人：<b>{{ master }}</b>{% if slaves_truncated %}（奴隶过多，仅展示前 100）{% endif %}</div>
+  <h2>奴隶名册</h2>
+  {% if slave_count == 0 %}
+  <div class="empty">名册空空如也 —— 快去「购买奴隶 @群友」吧</div>
+  {% else %}
+  <table>
+    <tbody>
+    {% for s in slaves %}<tr><td>{{ s.name }}（{{ s.id }}）</td><td>身价 {{ s.value }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+</body>
+</html>

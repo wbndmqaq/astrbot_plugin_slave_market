@@ -1,0 +1,465 @@
+{
+  "use_image": {
+    "description": "启用 HTML 图片渲染",
+    "hint": "使用独立 Playwright 渲染器（需安装依赖并执行 python -m playwright install chromium），失败自动回退纯文本",
+    "type": "bool",
+    "default": true
+  },
+  "render_scale": {
+    "description": "图片渲染清晰度倍率",
+    "hint": "device_scale_factor，2 为高清；过大增加体积",
+    "type": "float",
+    "default": 2.0,
+    "min": 1.0,
+    "max": 4.0
+  },
+  "webui_enabled": {
+    "description": "启用独立 WebUI 管理面板",
+    "type": "bool",
+    "default": true
+  },
+  "webui_host": {
+    "description": "WebUI 监听地址（推荐 127.0.0.1 本地访问更安全；若需局域网访问请务必设置 webui_password）",
+    "hint": "0.0.0.0 表示所有网卡可访问；仅本机查看请改为 127.0.0.1",
+    "type": "string",
+    "default": "127.0.0.1"
+  },
+  "webui_port": {
+    "description": "WebUI 独立端口",
+    "hint": "与其他服务冲突时请修改；启动失败会自动跳过并打印日志",
+    "type": "int",
+    "default": 17818,
+    "min": 1,
+    "max": 65535
+  },
+  "webui_password": {
+    "description": "WebUI 管理员密码（首次启动会自动生成临时密码，见日志）",
+    "hint": "已采用 Argon2id 哈希落盘 + 服务端会话；配置面板上的明文回显是临时可见，落盘永远是哈希",
+    "type": "string",
+    "default": ""
+  },
+  "webui_session_ttl": {
+    "description": "登录会话有效期（秒）",
+    "hint": "空闲超时也会强制重登。建议 1~24 小时",
+    "type": "int",
+    "default": 43200,
+    "min": 300,
+    "max": 604800
+  },
+  "webui_hash_time_cost": {
+    "description": "Argon2id 时间成本（迭代轮数）",
+    "hint": "越大越慢；2~4 是 2024 年的安全基线",
+    "type": "int",
+    "default": 3,
+    "min": 1,
+    "max": 10
+  },
+  "webui_show_password_plain": {
+    "description": "配置面板暂存明文（仅会话内可见）",
+    "hint": "关闭后即使管理员本人在面板上也无法看到原密码；保存即覆盖哈希",
+    "type": "bool",
+    "default": false
+  },
+  "ignoreCDUsers": {
+    "description": "免冷却用户 ID 列表",
+    "type": "list",
+    "hint": "填写平台用户 ID（字符串），这些用户不受任何冷却限制",
+    "obvious_hint": false,
+    "default": []
+  },
+  "buyBack": {
+    "description": "赎身设置",
+    "type": "object",
+    "items": {
+      "cooldown": {
+        "description": "赎身冷却时间（秒）",
+        "type": "int",
+        "default": 86400,
+        "min": 0,
+        "max": 2592000
+      },
+      "maxTimes": {
+        "description": "每周最大赎身次数",
+        "type": "int",
+        "default": 3,
+        "min": 1,
+        "max": 1000
+      },
+      "taxRate": {
+        "description": "赎身后剩余资产税率（0~1）",
+        "type": "float",
+        "default": 0.05,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "priceMulti": {
+        "description": "赎身价 = 身价 × 此倍率",
+        "type": "float",
+        "default": 2.0,
+        "min": 0.1,
+        "max": 100.0
+      },
+      "valueIncreaseMulti": {
+        "description": "赎身后身价倍率",
+        "type": "float",
+        "default": 1.2,
+        "min": 1.0,
+        "max": 10.0,
+        "hint": "1.0 表示赎身不涨身价"
+      }
+    }
+  },
+  "rob": {
+    "description": "抢劫设置",
+    "type": "object",
+    "items": {
+      "cooldown": {
+        "description": "抢劫冷却时间（秒）",
+        "type": "int",
+        "default": 600,
+        "min": 0,
+        "max": 604800
+      },
+      "successRate": {
+        "description": "抢劫成功率（0~1）",
+        "type": "float",
+        "default": 0.3,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "penalty": {
+        "description": "抢劫失败罚款比例（基于自身金币，0~1）",
+        "type": "float",
+        "default": 0.1,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "stealRate": {
+        "description": "抢劫成功时抢走对方现金的比例",
+        "type": "float",
+        "default": 0.2,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "maxSteal": {
+        "description": "单次最多抢走的金币",
+        "type": "int",
+        "default": 100,
+        "min": 0,
+        "max": 1000000000
+      },
+      "maxPenalty": {
+        "description": "抢劫失败时最多罚款的金币",
+        "type": "int",
+        "default": 50,
+        "min": 0,
+        "max": 1000000000
+      }
+    }
+  },
+  "work": {
+    "description": "打工设置",
+    "type": "object",
+    "items": {
+      "cooldown": {
+        "description": "普通打工冷却时间（秒）",
+        "type": "int",
+        "default": 3600,
+        "min": 0,
+        "max": 604800
+      },
+      "slaveownerCooldown": {
+        "description": "管理员（奴隶主）打工冷却时间（秒）",
+        "type": "int",
+        "default": 60,
+        "min": 0,
+        "max": 604800
+      },
+      "slaveownerWageMin": {
+        "description": "奴隶主自己打工的基础工资下限",
+        "type": "int",
+        "default": 100,
+        "min": 0,
+        "max": 1000000000
+      },
+      "slaveownerWageMax": {
+        "description": "奴隶主自己打工的基础工资上限",
+        "type": "int",
+        "default": 2000,
+        "min": 0,
+        "max": 1000000000
+      },
+      "wageMin": {
+        "description": "普通玩家自己打工的基础工资下限",
+        "type": "int",
+        "default": 10,
+        "min": 0,
+        "max": 1000000000
+      },
+      "wageMax": {
+        "description": "普通玩家自己打工的基础工资上限",
+        "type": "int",
+        "default": 100,
+        "min": 0,
+        "max": 1000000000
+      },
+      "slaveWageMin": {
+        "description": "每个奴隶打工的基础工资下限",
+        "type": "int",
+        "default": 5,
+        "min": 0,
+        "max": 1000000000
+      },
+      "slaveWageMax": {
+        "description": "每个奴隶打工的基础工资上限",
+        "type": "int",
+        "default": 20,
+        "min": 0,
+        "max": 1000000000
+      },
+      "slackRate": {
+        "description": "奴隶摸鱼概率（0~1）",
+        "type": "float",
+        "default": 0.1,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "slackValueLoss": {
+        "description": "摸鱼时奴隶身价下降额",
+        "type": "float",
+        "default": 20.0,
+        "min": 0.0,
+        "max": 1000000
+      },
+      "expenseRate": {
+        "description": "触发意外支出的概率（0~1）",
+        "type": "float",
+        "default": 0.2,
+        "min": 0.0,
+        "max": 1.0
+      }
+    }
+  },
+  "purchase": {
+    "description": "购买设置",
+    "type": "object",
+    "items": {
+      "cooldown": {
+        "description": "购买冷却时间（秒）",
+        "type": "int",
+        "default": 3600,
+        "min": 0,
+        "max": 604800
+      },
+      "valueGain": {
+        "description": "成交后奴隶身价上涨额",
+        "type": "float",
+        "default": 20.0,
+        "min": 0.0,
+        "max": 1000000,
+        "hint": "每笔成交都会抬高该奴隶身价，数值越大通胀越快"
+      }
+    }
+  },
+  "bank": {
+    "description": "银行设置",
+    "type": "object",
+    "items": {
+      "initialLimit": {
+        "description": "初始存款上限",
+        "type": "int",
+        "default": 1000,
+        "min": 1,
+        "max": 1000000000000,
+        "hint": "只影响此后新建的存档，已有玩家不变"
+      },
+      "initialLevel": {
+        "description": "初始信用等级",
+        "type": "int",
+        "default": 1,
+        "min": 1,
+        "max": 10000,
+        "hint": "只影响此后新建的存档，已有玩家不变"
+      },
+      "initialUpgradePrice": {
+        "description": "首次升级信用费用",
+        "type": "int",
+        "default": 100,
+        "min": 1,
+        "max": 1000000000000,
+        "hint": "只影响此后新建的存档，已有玩家不变"
+      },
+      "upgradePriceMulti": {
+        "description": "升级费用增长倍数",
+        "type": "float",
+        "default": 1.2,
+        "min": 1.01,
+        "max": 100.0,
+        "hint": "必须 >1，否则升级费用不增长"
+      },
+      "limitIncreaseMulti": {
+        "description": "存款上限增长倍数",
+        "type": "float",
+        "default": 1.25,
+        "min": 1.0,
+        "max": 10.0
+      },
+      "interestRate": {
+        "description": "每小时利息率（0~1）",
+        "type": "float",
+        "default": 0.01,
+        "min": 0.0,
+        "max": 0.5
+      },
+      "maxInterestTime": {
+        "description": "单次最多计息小时数",
+        "type": "int",
+        "default": 24,
+        "min": 0,
+        "max": 720,
+        "hint": "单次领息最多累计的小时数"
+      }
+    }
+  },
+  "training": {
+    "description": "训练设置",
+    "type": "object",
+    "items": {
+      "cooldown": {
+        "description": "同一奴隶两次训练的冷却时间（秒）",
+        "type": "int",
+        "default": 7200,
+        "min": 0,
+        "max": 604800
+      },
+      "successRate": {
+        "description": "训练成功率（0~1）",
+        "type": "float",
+        "default": 0.7,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "costRate": {
+        "description": "训练花费占奴隶身价的比例（0~2）",
+        "type": "float",
+        "default": 0.1,
+        "min": 0.01,
+        "max": 2.0,
+        "hint": "不能为 0，否则可近乎免费刷身价"
+      },
+      "valueIncreaseRate": {
+        "description": "训练成功时身价提升比例（0~1）",
+        "type": "float",
+        "default": 0.2,
+        "min": 0.0,
+        "max": 1.0
+      }
+    }
+  },
+  "arena": {
+    "description": "决斗（竞技场）设置",
+    "type": "object",
+    "items": {
+      "cooldown": {
+        "description": "决斗冷却时间（秒）",
+        "type": "int",
+        "default": 7200,
+        "min": 0,
+        "max": 604800
+      },
+      "entryFee": {
+        "description": "决斗报名费",
+        "type": "int",
+        "default": 50,
+        "min": 0,
+        "max": 1000000000
+      },
+      "rewardRate": {
+        "description": "获胜奖励占报名费的比例（0~1）",
+        "type": "float",
+        "default": 0.2,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "valueBonus": {
+        "description": "获胜奴隶身价提升比例（0~1）",
+        "type": "float",
+        "default": 0.1,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "loseValueRate": {
+        "description": "败方身价下降比例",
+        "type": "float",
+        "default": 0.05,
+        "min": 0.0,
+        "max": 1.0,
+        "hint": "败方身价下降比例。配 0 时胜者也不会涨（身价守恒）"
+      },
+      "minValue": {
+        "description": "决斗失败后的身价下限",
+        "type": "float",
+        "default": 100.0,
+        "min": 0.0,
+        "max": 1000000,
+        "hint": "只保证不因失败跌破，不会把更低的身价抬上来"
+      },
+      "maxWinBonus": {
+        "description": "胜者身价最大涨幅（占胜者身价比例）",
+        "type": "float",
+        "default": 0.2,
+        "min": 0.0,
+        "max": 1.0,
+        "hint": "实际涨幅 = min(valueBonus×value, loseValueRate×败者身价, maxWinBonus×胜者身价)"
+      }
+    }
+  },
+  "ranking": {
+    "description": "排位赛设置",
+    "type": "object",
+    "items": {
+      "cooldown": {
+        "description": "排位赛冷却时间（秒）",
+        "type": "int",
+        "default": 3600,
+        "min": 0,
+        "max": 604800
+      },
+      "rewardRate": {
+        "description": "胜利奖励 = |分数变化| × 此系数",
+        "type": "float",
+        "default": 0.1,
+        "min": 0.0,
+        "max": 5.0,
+        "hint": "失败不发奖励"
+      }
+    }
+  },
+  "transfer": {
+    "description": "转账设置",
+    "type": "object",
+    "items": {
+      "feeRate": {
+        "description": "转账手续费率（0~1）",
+        "type": "float",
+        "default": 0.1,
+        "min": 0.0,
+        "max": 1.0
+      },
+      "minAmount": {
+        "description": "最低转账金额",
+        "type": "int",
+        "default": 100,
+        "min": 1,
+        "max": 1000000000000
+      }
+    }
+  },
+  "backupKeep": {
+    "description": "保留的回收站记录数与备份文件数（超出自动清理最旧的，0 为不限）",
+    "type": "int",
+    "default": 10,
+    "min": 0,
+    "max": 1000
+  }
+}

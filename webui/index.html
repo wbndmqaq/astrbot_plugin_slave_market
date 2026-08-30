@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>奴隶市场 · 管理账房</title>
+<link rel="stylesheet" href="/webui/style.css">
+</head>
+<body>
+<div class="paper-noise" aria-hidden="true"></div>
+<div class="bg-glow" aria-hidden="true"><i class="blob blob-1"></i><i class="blob blob-2"></i><i class="blob blob-3"></i></div>
+<div class="motes" id="moteField" aria-hidden="true"></div>
+<div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
+
+<!-- 登录 -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15" r="1.6"/></svg>
+    <h1>账房重地</h1>
+    <p class="sub">请输入管理员密码进入奴隶市场账房</p>
+    <input type="password" id="loginPwd" placeholder="访问密码" autocomplete="current-password">
+    <button class="btn primary block" id="loginBtn">解 锁</button>
+    <p class="login-err" id="loginErr" role="alert"></p>
+  </div>
+</div>
+
+<!-- 强制重置密码（首次登录后立刻要求设置新密码） -->
+<div class="login-overlay" id="resetOverlay">
+  <div class="login-box">
+    <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+    <h1>设置新密码</h1>
+    <p class="sub">系统首次启动自动生成的临时密码必须更换为你的密码（落盘用 Argon2id 哈希，不会再以明文保存）</p>
+    <input type="password" id="resetNew" placeholder="新密码（≥6 字节）" autocomplete="new-password">
+    <input type="password" id="resetConfirm" placeholder="再次输入新密码" autocomplete="new-password">
+    <button class="btn primary block" id="resetBtn">确 认</button>
+    <p class="login-err" id="resetErr" role="alert"></p>
+  </div>
+</div>
+
+<div class="shell">
+  <!-- 侧栏导航 -->
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/><path d="M9 11h.01M12 11h.01M15 11h.01"/></svg>
+      <div><b>奴隶市场</b><span>管理账房</span></div>
+    </div>
+    <nav class="nav" id="nav">
+      <i class="nav-ink" aria-hidden="true"></i>
+      <button class="nav-btn on" data-p="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="3" width="8" height="10" rx="1.5"/><rect x="13" y="3" width="8" height="6" rx="1.5"/><rect x="13" y="11" width="8" height="10" rx="1.5"/><rect x="3" y="15" width="8" height="6" rx="1.5"/></svg>总览</button>
+      <button class="nav-btn" data-p="rank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0Z"/><path d="M7 6H4a1 1 0 0 0-1 1c0 2 1.5 3.5 4 4M17 6h3a1 1 0 0 1 1 1c0 2-1.5 3.5-4 4"/></svg>排行榜</button>
+      <button class="nav-btn" data-p="market"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M3 9h18v3a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0Z"/><path d="M5 14v7h14v-7"/></svg>市场</button>
+      <button class="nav-btn" data-p="players"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14.5c2.5.5 4 2.6 4 5.5"/></svg>玩家</button>
+      <button class="nav-btn" data-p="backup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>备份</button>
+      <button class="nav-btn" data-p="texts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>文案</button>
+      <button class="nav-btn" data-p="config"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h0a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h0a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z"/></svg>配置</button>
+    </nav>
+    <div class="side-foot">
+      <span class="chip"><i class="dot"></i><span id="clock">--:--</span></span>
+      <span class="chip" id="verChip">v?</span>
+      <button class="chip link" id="logoutChip" hidden>退出登录</button>
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <main class="main">
+    <header class="hdr">
+      <h1 id="pageTitle">总览</h1>
+      <div class="gid-picker" id="gidPickerWrap" hidden>
+        <span class="gid-label" id="gidLabel">群</span>
+        <select id="gidPicker" aria-labelledby="gidLabel"></select>
+      </div>
+    </header>
+
+    <!-- 总览 -->
+    <section class="panel on" id="p-overview">
+      <div class="stat-grid" id="statCards"></div>
+      <div class="card card-shine">
+        <div class="card-hd"><h2>快速上手</h2></div>
+        <div class="guide-grid">
+          <div class="guide-item"><b>！购买奴隶 @群友</b><span>把群友买成奴隶，成交后对方 +20 身价</span></div>
+          <div class="guide-item"><b>！打工</b><span>让奴隶打工赚金币，10% 概率摸鱼</span></div>
+          <div class="guide-item"><b>！训练 @奴隶</b><span>花钱训练，成功提升奴隶身价</span></div>
+          <div class="guide-item"><b>！决斗 @奴隶1 @奴隶2</b><span>奴隶对决，赢家身价上涨</span></div>
+          <div class="guide-item"><b>！存款 金额</b><span>银行存钱吃利息，信用等级提升上限</span></div>
+          <div class="guide-item"><b>！奴隶帮助</b><span>查看全部指令与玩法说明</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 排行榜 -->
+    <section class="panel" id="p-rank">
+      <div class="seg" id="rankKind">
+        <button class="on" data-k="currency">金币</button>
+        <button data-k="value">身价</button>
+        <button data-k="slave">奴隶</button>
+        <button data-k="bank">银行</button>
+      </div>
+      <div class="card"><div class="rank-list" id="rankList"></div></div>
+    </section>
+
+    <!-- 市场 -->
+    <section class="panel" id="p-market">
+      <div class="card"><div class="market-grid" id="marketGrid"></div></div>
+    </section>
+
+    <!-- 玩家 -->
+    <section class="panel" id="p-players">
+      <div class="toolbar">
+        <input id="searchKw" placeholder="搜索 ID 或昵称">
+        <button class="btn sm" id="btnSearch">搜索</button>
+      </div>
+      <div class="card"><div class="table-wrap"><table class="tbl" id="playerTbl"><thead><tr>
+        <th>玩家</th><th>金币</th><th>身价</th><th>奴隶</th><th>主人</th><th>银行</th><th>段位</th><th>操作</th>
+      </tr></thead><tbody></tbody></table></div>
+      <div class="pager" id="playerPager"></div></div>
+    </section>
+
+    <!-- 备份 -->
+    <section class="panel" id="p-backup">
+      <div class="toolbar"><button class="btn primary sm" id="btnCreateBackup">创建备份</button></div>
+      <div class="card"><div class="bk-list" id="bkList"></div></div>
+    </section>
+
+    <!-- 文案 -->
+    <section class="panel" id="p-texts">
+      <div class="toolbar">
+        <span class="sr-only" id="textsNameLabel">文案文件</span>
+        <select id="textsName" aria-labelledby="textsNameLabel"><option value="workCopywriting">workCopywriting.json</option><option value="help">help.json</option></select>
+        <button class="btn sm" id="btnLoadTexts">加载</button>
+        <button class="btn primary sm" id="btnSaveTexts">保存</button>
+      </div>
+      <div class="card" id="textsBody"><p class="empty">选择文案文件后点「加载」</p></div>
+    </section>
+
+    <!-- 配置 -->
+    <section class="panel" id="p-config">
+      <div class="card"><div class="cfg-form" id="cfgForm"><p class="empty">加载中…</p></div></div>
+      <div class="toolbar end"><button class="btn primary" id="btnSaveCfg">保存配置</button></div>
+    </section>
+  </main>
+</div>
+
+<!-- 编辑玩家弹窗 -->
+<div class="modal-mask" id="editMask">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+    <div class="modal-ico" id="editIco" aria-hidden="true"></div>
+    <h3 id="editTitle">编辑玩家</h3>
+    <div class="form" id="editForm"></div>
+    <div class="modal-btns">
+      <button class="btn ghost" id="editCancel">取消</button>
+      <button class="btn danger" id="editDelete">删除存档</button>
+      <button class="btn primary" id="editSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 二次确认弹窗（独立第二层，避免覆盖编辑弹窗内容） -->
+<div class="modal-mask ask" id="askMask">
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="askTitle" aria-describedby="askMsg">
+    <div class="modal-ico warn" id="askIco" aria-hidden="true"></div>
+    <h3 id="askTitle">确认</h3>
+    <p class="ask-msg" id="askMsg"></p>
+    <div class="modal-btns">
+      <button class="btn ghost" id="askCancel">取消</button>
+      <button class="btn primary" id="askOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-box" id="toastBox" role="status" aria-live="polite"></div>
+<script src="/webui/app.js"></script>
+</body>
+</html>

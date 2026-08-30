@@ -1,0 +1,30 @@
+name: astrbot_plugin_slave_market
+display_name: 奴隶市场
+desc: |-
+  群内互动经营游戏「奴隶市场」。
+
+  玩法：购买群友当奴隶、让奴隶打工赚钱、训练/决斗/排位赛提升奴隶身价、
+  银行存取款与利息、抢劫、赎身。
+
+  指令（必须携带前缀：！ / ! 均可）：
+  - 奴隶帮助 / 奴隶菜单
+  - 购买奴隶(@或QQ) / 我的奴隶 / 放生奴隶 / 赎身 / 抢劫
+  - 打工 / 训练(@或QQ) / 一键训练 / 决斗 @QQ1 @QQ2 / 排位赛 / 参加排位赛(@或QQ)
+  - 奴隶市场 / 奴隶身价排行榜 / 奴隶资金排行榜
+  - 存款 N / 一键存款 / 取款 N / 银行信息 / 领取利息 / 升级信用 / 一键升级信用 / 转账 N @某人
+  - 奴隶备份 / 奴隶备份列表 / 奴隶恢复备份 N / 奴隶删除备份 N（管理员）
+version: 1.0.0
+author: Tloml-Starry (AstrBot 移植版)
+repo: https://gitee.com/Tloml-Starry/Slave-Market
+astrbot_version: ">=4.9.2"
+tags:
+  - 游戏
+  - 互动
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - lark
+  - discord
+  - slack
+  - kook

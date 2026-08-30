@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html{display:inline-block}
+body{width:600px;padding:26px;display:inline-block;color:#3e2c1b;
+  font-family:"Noto Serif SC","Source Han Serif SC","STSong","SimSun",serif;
+  background:#f5f0e1;
+  background-image:repeating-linear-gradient(0deg,rgba(181,101,29,.03) 0 1px,transparent 1px 26px),
+    radial-gradient(ellipse 900px 500px at 50% -10%,#fdf9ee 0%,#f5f0e1 70%);
+  border:3px double #b5651d;outline:6px solid #f5f0e1;box-shadow:inset 0 0 60px rgba(181,101,29,.08)}
+.hdr{text-align:center;margin-bottom:18px}
+.icon{font-size:34px;line-height:1}
+h1{font-size:25px;letter-spacing:5px;color:#8c3b2e;margin-top:6px}
+.rule{display:flex;align-items:center;gap:10px;margin:14px 0;color:#b5651d}
+.rule::before,.rule::after{content:"";flex:1;border-top:1px solid #d8c49a}
+.lines{display:flex;flex-direction:column;gap:9px}
+.line{background:#fdf9ee;border:1px solid #e3d5b8;border-left:4px solid var(--accent,#b5651d);
+  border-radius:0 8px 8px 0;padding:10px 14px;font-size:15.5px;line-height:1.55}
+.tone-ok{--accent:#6b7b3c}
+.tone-warn{--accent:#c9821e}
+.tone-err{--accent:#a53f2b}
+.foot{text-align:center;color:#9b855f;font-size:12px;margin-top:18px;letter-spacing:2px}
+</style>
+</head>
+<body class="tone-{{ tone or 'ok' }}">
+  <div class="hdr">
+    <div class="icon">{{ icon or "📜" }}</div>
+    <h1>{{ title or "奴隶市场" }}</h1>
+  </div>
+  <div class="rule">❖</div>
+  <div class="lines">
+    {% for l in lines or [] %}<div class="line">{{ l }}</div>{% endfor %}
+  </div>
+  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+</body>
+</html>

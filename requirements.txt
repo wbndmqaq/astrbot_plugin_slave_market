@@ -1,0 +1,5 @@
+playwright
+jinja2
+aiohttp
+argon2-cffi
+pyjwt

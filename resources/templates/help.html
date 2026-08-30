@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html{display:inline-block}
+body{width:640px;padding:26px;display:inline-block;color:#3e2c1b;
+  font-family:"Noto Serif SC","Source Han Serif SC","STSong","SimSun",serif;
+  background:#f5f0e1;
+  background-image:repeating-linear-gradient(0deg,rgba(181,101,29,.03) 0 1px,transparent 1px 26px),
+    radial-gradient(ellipse 900px 500px at 50% -10%,#fdf9ee 0%,#f5f0e1 70%);
+  border:3px double #b5651d;outline:6px solid #f5f0e1;box-shadow:inset 0 0 60px rgba(181,101,29,.08)}
+.hdr{text-align:center;margin-bottom:16px}
+.icon{font-size:36px}
+h1{font-size:26px;letter-spacing:6px;color:#8c3b2e;margin-top:6px}
+.sub{text-align:center;color:#9b855f;font-size:13px;margin-top:4px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+.sec{background:#fdf9ee;border:1px solid #e3d5b8;border-radius:10px;padding:13px 15px}
+.sec h2{font-size:16px;color:#b5651d;letter-spacing:2px;margin-bottom:8px;border-bottom:1px dashed #d8c49a;padding-bottom:6px}
+.sec ul{list-style:none}
+.sec li{font-size:14px;line-height:1.7;padding-left:12px;position:relative;color:#4a3826}
+.sec li::before{content:"·";position:absolute;left:0;color:#b5651d;font-weight:bold}
+.sec.wide{grid-column:1 / -1}
+.foot{text-align:center;color:#9b855f;font-size:12px;margin-top:16px;letter-spacing:2px}
+</style>
+</head>
+<body>
+  <div class="hdr">
+    <div class="icon">📜</div>
+    <h1>{{ title or "奴隶市场 · 帮助" }}</h1>
+    <div class="sub">{{ sub or "" }}</div>
+  </div>
+  <div class="grid">
+    {% for s in sections or [] %}
+    <div class="sec {{ 'wide' if s.wide else '' }}">
+      <h2>{{ s.icon }} {{ s.title }}</h2>
+      <ul>{% for it in s['items'] %}<li>{{ it }}</li>{% endfor %}</ul>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+</body>
+</html>

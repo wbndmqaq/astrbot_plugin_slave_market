@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html{display:inline-block}
+body{width:620px;padding:26px;display:inline-block;color:#3e2c1b;
+  font-family:"Noto Serif SC","Source Han Serif SC","STSong","SimSun",serif;
+  background:#f5f0e1;
+  background-image:repeating-linear-gradient(0deg,rgba(181,101,29,.03) 0 1px,transparent 1px 26px),
+    radial-gradient(ellipse 900px 500px at 50% -10%,#fdf9ee 0%,#f5f0e1 70%);
+  border:3px double #b5651d;outline:6px solid #f5f0e1;box-shadow:inset 0 0 60px rgba(181,101,29,.08)}
+.hdr{text-align:center;margin-bottom:12px}
+.icon{font-size:34px}
+h1{font-size:24px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
+.settle{display:flex;gap:10px;margin-bottom:12px}
+.settle .box{flex:1;background:#fdf9ee;border:1px solid #e3d5b8;border-radius:10px;text-align:center;padding:10px}
+.settle .v{font-size:18px;font-weight:bold;color:#b5651d}
+.settle .k{font-size:12px;color:#9b855f;margin-top:2px}
+.row{display:flex;align-items:center;gap:12px;background:#fdf9ee;border:1px solid #e3d5b8;
+  border-radius:8px;padding:9px 13px;margin-bottom:7px}
+.badge{font-size:12.5px;font-weight:bold;border-radius:999px;padding:3px 11px;white-space:nowrap}
+.ok{background:#e7ecd8;color:#55672a}
+.fail{background:#f3ddd6;color:#8c3b2e}
+.rest{background:#efe6d2;color:#8a5a12}
+.row .name{font-weight:bold;font-size:14.5px;white-space:nowrap}
+.row .detail{font-size:13.5px;color:#6d5a42;line-height:1.5}
+.foot{text-align:center;color:#9b855f;font-size:12px;margin-top:14px;letter-spacing:2px}
+</style>
+</head>
+<body>
+  <div class="hdr">
+    <div class="icon">🎯</div>
+    <h1>{{ "训练结果" if single else "一键训练结算" }}</h1>
+  </div>
+  {% if not single %}
+  <div class="settle">
+    <div class="box"><div class="v">{{ ok }}/{{ total }}</div><div class="k">训练成功</div></div>
+    <div class="box"><div class="v">{{ spent }}</div><div class="k">总花费（金币）</div></div>
+    <div class="box"><div class="v">{{ balance }}</div><div class="k">当前余额（金币）</div></div>
+  </div>
+  {% else %}
+  <div class="settle"><div class="box"><div class="v">{{ balance }}</div><div class="k">当前余额（金币）</div></div></div>
+  {% endif %}
+  {% for r in results or [] %}
+  <div class="row">
+    <span class="badge {{ 'ok' if r.ok else ('fail' if r.ok == False else 'rest') }}">{{ r.result }}</span>
+    <span class="name">{{ r.name }}</span>
+    <span class="detail">{{ r.detail }}</span>
+  </div>
+  {% endfor %}
+  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+</body>
+</html>

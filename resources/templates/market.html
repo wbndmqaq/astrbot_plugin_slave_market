@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html{display:inline-block}
+body{width:620px;padding:26px;display:inline-block;color:#3e2c1b;
+  font-family:"Noto Serif SC","Source Han Serif SC","STSong","SimSun",serif;
+  background:#f5f0e1;
+  background-image:repeating-linear-gradient(0deg,rgba(181,101,29,.03) 0 1px,transparent 1px 26px),
+    radial-gradient(ellipse 900px 500px at 50% -10%,#fdf9ee 0%,#f5f0e1 70%);
+  border:3px double #b5651d;outline:6px solid #f5f0e1;box-shadow:inset 0 0 60px rgba(181,101,29,.08)}
+.hdr{text-align:center;margin-bottom:8px}
+.icon{font-size:34px}
+h1{font-size:25px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
+.sub{text-align:center;color:#9b855f;font-size:13px;margin-top:4px}
+table{width:100%;border-collapse:separate;border-spacing:0 5px;margin-top:12px}
+td{background:#fdf9ee;padding:7px 13px;font-size:14.5px}
+tr td:first-child{border-radius:8px 0 0 8px;border-left:3px solid #c67b5c;width:40px;text-align:center;color:#9b855f}
+tr td:nth-child(2){font-weight:bold}
+tr td:nth-child(3){color:#9b855f;font-size:12.5px}
+tr td:nth-child(4){border-radius:0 8px 8px 0;text-align:right;color:#8c3b2e;font-weight:bold;white-space:nowrap}
+tr td:nth-child(5){background:transparent;border:0;width:40px;text-align:right;color:#9b855f;font-size:12.5px;padding-left:0}
+.empty{text-align:center;color:#9b855f;padding:20px 0}
+.foot{text-align:center;color:#9b855f;font-size:12px;margin-top:14px;letter-spacing:2px}
+</style>
+</head>
+<body>
+  <div class="hdr">
+    <div class="icon">🛒</div>
+    <h1>奴 隶 市 场</h1>
+    <div class="sub">共 {{ total }} 人在册 · 未出场过的身价均为 100</div>
+  </div>
+  {% if total == 0 %}
+  <div class="empty">市场上还没有人，快叫群友来玩吧</div>
+  {% else %}
+  <table>
+    <tbody>
+    {% for it in items %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>{{ it.name }}</td>
+      <td>{{ it.id }}</td>
+      <td>身价 {{ it.value }}</td>
+      <td>主：{{ it.master }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+</body>
+</html>
