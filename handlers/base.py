@@ -15,10 +15,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-try:  # 兼容包加载与 sys.path 加载两种方式
-    from ..core.result import notice
-except ImportError:  # pragma: no cover
-    from core.result import notice  # type: ignore
+from ..core.result import notice
 
 GID_HINT = "该功能只能在群聊中使用"
 

@@ -5,10 +5,7 @@
 
 import re
 
-try:  # 兼容包加载与 sys.path 加载两种方式
-    from ..core.result import notice
-except ImportError:  # pragma: no cover
-    from core.result import notice  # type: ignore
+from ..core.result import notice
 
 from .base import MAX_ARG_LEN, Route, at_targets, gid_of, nickname_of, numbers, uid_of
 

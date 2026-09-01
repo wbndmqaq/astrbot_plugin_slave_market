@@ -25,37 +25,16 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star
 
-try:
-    from .core.auth import (
-        Argon2Hasher,
-        AuthError,
-        AuthUnavailable,
-        PasswordStore,
-        rotate_password,
-    )
-    from .core.context import VERSION, GameCtx
-    from .handlers import ALL_ROUTES, install
-    from .webui.server import TEMP_PASSWORD_FILE, WebUIServer, _is_loopback_host
-except ImportError:  # 兼容以文件方式直接加载的旧版内核
-    import sys
-
-    # 顶层名 core/handlers/webui 是兜底导入的通用名：无论是其它插件的兜底
-    # 残留还是本插件上次热重载的旧模块，都必须先清出 sys.modules，否则下面
-    # 拿到的是别人的/过期的代码（内核重载只清 data.plugins.* 前缀）。
-    for _name in ("core", "handlers", "webui"):
-        for _key in [k for k in sys.modules if k == _name or k.startswith(_name + ".")]:
-            del sys.modules[_key]
-    sys.path.insert(0, str(Path(__file__).parent))
-    from core.auth import (
-        Argon2Hasher,
-        AuthError,
-        AuthUnavailable,
-        PasswordStore,
-        rotate_password,
-    )
-    from core.context import VERSION, GameCtx
-    from handlers import ALL_ROUTES, install
-    from webui.server import TEMP_PASSWORD_FILE, WebUIServer, _is_loopback_host
+from .core.auth import (
+    Argon2Hasher,
+    AuthError,
+    AuthUnavailable,
+    PasswordStore,
+    rotate_password,
+)
+from .core.context import VERSION, GameCtx
+from .handlers import ALL_ROUTES, install
+from .webui.server import TEMP_PASSWORD_FILE, WebUIServer, _is_loopback_host
 
 PLUGIN_NAME = "astrbot_plugin_slave_market"
 # 临时密码文件名的唯一来源在 webui/server.py（TEMP_PASSWORD_FILE），此处不再重复定义
@@ -278,6 +257,7 @@ class SlaveMarket(Star):
                     {"name": "天气晴朗", "effect": 1.1, "desc": "状态绝佳"}
                 ],
                 "ranking_tiers": [[1000, "青铜"]],
+                "ranking_top_tier": "钻石",
             },
         }
         merged: dict = {}

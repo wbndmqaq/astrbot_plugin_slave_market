@@ -36,7 +36,7 @@ h1{font-size:24px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
 <body>
   {% if info_mode %}
   <div class="hdr"><div class="icon">🏅</div><h1>奴隶排位赛信息</h1></div>
-  <div class="event">段位：{{ tier_desc or "青铜 <1000 ｜ 白银 <1400 ｜ 黄金 <1800 ｜ 铂金 <2200 ｜ 钻石 ≥2200" }}</div>
+  <div class="event">段位：{{ tier_desc or "（段位未配置）" }}</div>
   <div class="settle" style="flex-direction:column">
     {% for r in rows or [] %}
     <div class="box" style="display:flex;justify-content:space-between;text-align:left;padding:9px 14px">

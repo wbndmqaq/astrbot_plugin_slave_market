@@ -15,16 +15,10 @@ from pathlib import Path
 
 import astrbot.api.message_components as Comp
 
-try:  # 兼容包加载与 sys.path 加载两种方式
-    from .db import PlayerDB
-    from .renderer import PlaywrightRenderer
-    from .service import GameService
-    from .texts import Texts
-except ImportError:  # pragma: no cover
-    from db import PlayerDB  # type: ignore
-    from renderer import PlaywrightRenderer  # type: ignore
-    from service import GameService  # type: ignore
-    from texts import Texts  # type: ignore
+from .db import PlayerDB
+from .renderer import PlaywrightRenderer
+from .service import GameService
+from .texts import Texts
 
 VERSION = "1.0.0"
 

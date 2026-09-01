@@ -1,9 +1,6 @@
 """系统域指令：帮助 / 数据备份（管理员）。"""
 
-try:  # 兼容包加载与 sys.path 加载两种方式
-    from ..core.result import R, notice
-except ImportError:  # pragma: no cover
-    from core.result import R, notice  # type: ignore
+from ..core.result import R, notice
 
 from .base import Route, numbers
 

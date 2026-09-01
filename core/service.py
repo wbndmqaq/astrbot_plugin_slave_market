@@ -25,12 +25,8 @@ from pathlib import Path
 from typing import ClassVar
 
 
-try:  # 兼容包加载与 sys.path 加载两种方式
-    from .db import PlayerDB, _NUM_CAP
-    from .result import R, notice
-except ImportError:  # pragma: no cover
-    from db import PlayerDB, _NUM_CAP  # type: ignore
-    from result import R, notice  # type: ignore
+from .db import PlayerDB, _NUM_CAP
+from .result import R, notice
 
 # 一键升级信用的单次上限：防止配置成 upgradePriceMulti<=1 时同步空转卡死事件循环
 MAX_AUTO_UPGRADES = 100
@@ -729,6 +725,16 @@ class GameService:
         n1 = self._name(s1, sid1)
         n2 = self._name(s2, sid2)
 
+        # 动作文案缺失时决斗无法正常出结算，必须在扣费前拦截
+        actions = [str(a) for a in (self.copy.get("arena_actions") or []) if str(a)]
+        if not actions:
+            return notice(
+                "🚫",
+                "决斗动作文案未配置（arena_actions 为空），请在 WebUI 文案中补充",
+                [],
+                tone="err",
+            )
+
         # 身价差调整胜率（最高 ±30%）
         diff = s1["value"] - s2["value"]
         bonus = min(0.3, abs(diff) / max(s1["value"], s2["value"], 1) * 0.5)
@@ -759,9 +765,6 @@ class GameService:
         else:
             data["battleStats"]["losses"] += 1
 
-        actions = [str(a) for a in self.copy.get("arena_actions") or []]
-        if not actions:
-            actions = ["使出浑身解数", "奋力反击", "展开猛攻", "寻找破绽", "气势如虹", "毫不示弱"]
         process = [_sample(actions) for _ in range(self._rand(2, 3))]
         text = (
             f"⚔️ 决斗开始：{n1} VS {n2}\n" + "\n".join(process) + "\n"
@@ -795,8 +798,8 @@ class GameService:
 
     # ================= 排位赛 =================
 
-    # 对手/事件/段位文案来自 copy（resources/data/gameTexts.json，WebUI 可热更新），
-    # 不再硬编码在代码里。见 _opponents()/_events()/_tiers()。
+    # 对手/事件/段位文案唯一来源是 copy（resources/data/gameTexts.json，WebUI 可热更新）。
+    # 返回内容可能为空，调用方必须先判空再使用，绝不在代码里维护第二份副本。
 
     def _opponents(self) -> list[dict]:
         lst = self.copy.get("ranking_opponents") or []
@@ -814,16 +817,7 @@ class GameService:
                 )
             except (TypeError, ValueError):
                 continue
-        return out or [
-            {"name": "流浪剑客", "score": 800, "specialEffect": "剑术精湛，容易造成暴击"},
-            {"name": "江湖大侠", "score": 1200, "specialEffect": "内力深厚，防御力强"},
-            {"name": "武林高手", "score": 1600, "specialEffect": "轻功绝顶，闪避率高"},
-            {"name": "绝世高手", "score": 2000, "specialEffect": "武学通神，全面强化"},
-            {"name": "隐世门派弟子", "score": 1400, "specialEffect": "招式诡异，难以预测"},
-            {"name": "江湖杀手", "score": 1100, "specialEffect": "出手狠辣，伤害提升"},
-            {"name": "武馆教习", "score": 900, "specialEffect": "经验丰富，稳扎稳打"},
-            {"name": "散打高手", "score": 1300, "specialEffect": "近身搏斗见长"},
-        ]
+        return out
 
     def _events(self) -> list[dict]:
         lst = self.copy.get("ranking_events") or []
@@ -841,13 +835,7 @@ class GameService:
                 )
             except (TypeError, ValueError):
                 continue
-        return out or [
-            {"name": "天气晴朗", "effect": 1.1, "desc": "状态绝佳"},
-            {"name": "狂风暴雨", "effect": 0.9, "desc": "行动受限"},
-            {"name": "月黑风高", "effect": 1.2, "desc": "战力提升"},
-            {"name": "人来人往", "effect": 0.95, "desc": "注意力分散"},
-            {"name": "良辰吉日", "effect": 1.15, "desc": "运势加成"},
-        ]
+        return out
 
     def _tiers(self) -> list[tuple[int, str]]:
         lst = self.copy.get("ranking_tiers") or []
@@ -857,19 +845,27 @@ class GameService:
                 out.append((int(t[0]), str(t[1])))
             except (TypeError, ValueError, IndexError):
                 continue
-        return out or [(1000, "青铜"), (1400, "白银"), (1800, "黄金"), (2200, "铂金")]
+        return out
+
+    def _top_tier(self) -> str:
+        """顶级段位名（高于列表最高门槛）：唯一来源 gameTexts 的 ranking_top_tier。"""
+        top = str(self.copy.get("ranking_top_tier") or "")
+        return top or (self._tiers()[-1][1] if self._tiers() else "")
 
     def _tier(self, score: int) -> str:
-        for threshold, name in self._tiers():
+        tiers = self._tiers()
+        for threshold, name in tiers:
             if score < threshold:
                 return name
-        return "钻石"
+        return self._top_tier()
 
     def _tier_desc(self) -> str:
-        """段位说明文本：与 gameTexts 里的 tiers 保持一致（WebUI 改档位后自动同步）。"""
+        """段位说明文本：与 gameTexts 的 tiers / ranking_top_tier 保持一致（WebUI 改档位后自动同步）。"""
         tiers = self._tiers()
+        if not tiers:
+            return ""
         parts = [f"{name} <{threshold}" for threshold, name in tiers]
-        parts.append(f"钻石 ≥{tiers[-1][0]}" if tiers else "钻石")
+        parts.append(f"{self._top_tier()} ≥{tiers[-1][0]}")
         return "｜".join(parts)
 
     @staticmethod
@@ -910,8 +906,21 @@ class GameService:
         slave_name = self._name(slave, target)
         score = slave["ranking"]["score"]
 
-        event = _sample(self._events())
-        valid = [o for o in self._opponents() if abs(o["score"] - score) <= 300] or self._opponents()
+        # 文案唯一来源是 gameTexts.json；缺失时静默降级为提示，不写任何数据
+        events = self._events()
+        opponents = self._opponents()
+        tiers = self._tiers()
+        if not events or not opponents or not tiers:
+            return notice(
+                "🚫",
+                "排位赛文案未配置（gameTexts 的 events / opponents / tiers 为空），"
+                "请在 WebUI 文案中补充",
+                [],
+                tone="err",
+            )
+
+        event = _sample(events)
+        valid = [o for o in opponents if abs(o["score"] - score) <= 300] or opponents
         opponent = _sample(valid)
 
         # 胜率以 Elo 期望胜率为基准再乘事件系数
@@ -983,8 +992,14 @@ class GameService:
             f"{r['name']}：段位 {r['tier']}｜分数 {r['score']}｜场次 {r['matches']}"
             for r in rows
         )
-        text += "\n【段位说明】" + self._tier_desc()
-        return R(tmpl="rank_match", data={"info_mode": True, "rows": rows, "tier_desc": self._tier_desc()}, text=text)
+        td = self._tier_desc()
+        if td:
+            text += "\n【段位说明】" + td
+        return R(
+            tmpl="rank_match",
+            data={"info_mode": True, "rows": rows, "tier_desc": td},
+            text=text,
+        )
 
     # ================= 银行 =================
 

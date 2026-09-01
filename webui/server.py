@@ -22,26 +22,15 @@ from pathlib import Path
 
 from aiohttp import web
 
-try:  # 包模式（AstrBot 标准加载）：相对导入，绝不向顶层命名空间泄漏 "core"
-    from ..core.auth import (
-        Argon2Hasher,
-        AuthError,
-        AuthUnavailable,
-        JWTIssuer,
-        PasswordStore,
-        SessionStore,
-        rotate_password,
-    )
-except ImportError:  # 文件方式直接加载的旧版内核兜底
-    from core.auth import (
-        Argon2Hasher,
-        AuthError,
-        AuthUnavailable,
-        JWTIssuer,
-        PasswordStore,
-        SessionStore,
-        rotate_password,
-    )
+from ..core.auth import (
+    Argon2Hasher,
+    AuthError,
+    AuthUnavailable,
+    JWTIssuer,
+    PasswordStore,
+    SessionStore,
+    rotate_password,
+)
 
 COOKIE = "slvm_session"
 TTL_DEFAULT = 12 * 3600
@@ -1147,12 +1136,22 @@ class WebUIServer:
         gameTexts 的键是固定的（service.py 直接按 key 下标访问），缺键或
         类型不对会让决斗/排位赛指令在运行时抛异常，所以这里逐键强校验。
         """
-        allowed = {"arena_actions", "ranking_opponents", "ranking_events", "ranking_tiers"}
+        allowed = {
+            "arena_actions",
+            "ranking_opponents",
+            "ranking_events",
+            "ranking_tiers",
+            "ranking_top_tier",
+        }
         for k, v in data.items():
             if not isinstance(k, str) or not re.fullmatch(r"[A-Za-z0-9_]+", k):
                 return f"非法键名：{str(k)[:30]}"
             if k not in allowed:
                 return f"未知键：{k}"
+        if "ranking_top_tier" in data:
+            v = data["ranking_top_tier"]
+            if not isinstance(v, str) or not v.strip() or len(v) > _TEXT_LEN_MAX:
+                return f"键 ranking_top_tier 必须是非空字符串（不超过 {_TEXT_LEN_MAX} 字）"
         if "arena_actions" in data:
             v = data["arena_actions"]
             if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
