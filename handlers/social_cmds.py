@@ -3,11 +3,6 @@
 群聊限定校验由 base.install() 统一处理（Route.group_only 默认 True）。
 """
 
-try:  # 兼容包加载与 sys.path 加载两种方式
-    from ..core.result import notice  # noqa: F401 - 供后续指令扩展
-except ImportError:  # pragma: no cover
-    from core.result import notice  # type: ignore # noqa: F401
-
 from .base import Route, gid_of, is_admin, nickname_of, target_of, uid_of
 
 P = r"^[！!]"

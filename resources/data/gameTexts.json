@@ -1,0 +1,33 @@
+{
+    "arena_actions": [
+        "使出浑身解数",
+        "奋力反击",
+        "展开猛攻",
+        "寻找破绽",
+        "气势如虹",
+        "毫不示弱"
+    ],
+    "ranking_opponents": [
+        {"name": "流浪剑客", "score": 800, "specialEffect": "剑术精湛，容易造成暴击"},
+        {"name": "江湖大侠", "score": 1200, "specialEffect": "内力深厚，防御力强"},
+        {"name": "武林高手", "score": 1600, "specialEffect": "轻功绝顶，闪避率高"},
+        {"name": "绝世高手", "score": 2000, "specialEffect": "武学通神，全面强化"},
+        {"name": "隐世门派弟子", "score": 1400, "specialEffect": "招式诡异，难以预测"},
+        {"name": "江湖杀手", "score": 1100, "specialEffect": "出手狠辣，伤害提升"},
+        {"name": "武馆教习", "score": 900, "specialEffect": "经验丰富，稳扎稳打"},
+        {"name": "散打高手", "score": 1300, "specialEffect": "近身搏斗见长"}
+    ],
+    "ranking_events": [
+        {"name": "天气晴朗", "effect": 1.1, "desc": "状态绝佳"},
+        {"name": "狂风暴雨", "effect": 0.9, "desc": "行动受限"},
+        {"name": "月黑风高", "effect": 1.2, "desc": "战力提升"},
+        {"name": "人来人往", "effect": 0.95, "desc": "注意力分散"},
+        {"name": "良辰吉日", "effect": 1.15, "desc": "运势加成"}
+    ],
+    "ranking_tiers": [
+        [1000, "青铜"],
+        [1400, "白银"],
+        [1800, "黄金"],
+        [2200, "铂金"]
+    ]
+}

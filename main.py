@@ -35,7 +35,7 @@ try:
     )
     from .core.context import VERSION, GameCtx
     from .handlers import ALL_ROUTES, install
-    from .webui.server import WebUIServer
+    from .webui.server import TEMP_PASSWORD_FILE, WebUIServer, _is_loopback_host
 except ImportError:  # 兼容以文件方式直接加载的旧版内核
     import sys
 
@@ -43,9 +43,7 @@ except ImportError:  # 兼容以文件方式直接加载的旧版内核
     # 残留还是本插件上次热重载的旧模块，都必须先清出 sys.modules，否则下面
     # 拿到的是别人的/过期的代码（内核重载只清 data.plugins.* 前缀）。
     for _name in ("core", "handlers", "webui"):
-        for _key in [
-            k for k in sys.modules if k == _name or k.startswith(_name + ".")
-        ]:
+        for _key in [k for k in sys.modules if k == _name or k.startswith(_name + ".")]:
             del sys.modules[_key]
     sys.path.insert(0, str(Path(__file__).parent))
     from core.auth import (
@@ -57,24 +55,15 @@ except ImportError:  # 兼容以文件方式直接加载的旧版内核
     )
     from core.context import VERSION, GameCtx
     from handlers import ALL_ROUTES, install
-    from webui.server import WebUIServer
+    from webui.server import TEMP_PASSWORD_FILE, WebUIServer, _is_loopback_host
 
 PLUGIN_NAME = "astrbot_plugin_slave_market"
-TEMP_PASSWORD_FILE = "admin_passwd.txt"
+# 临时密码文件名的唯一来源在 webui/server.py（TEMP_PASSWORD_FILE），此处不再重复定义
 
 
 def _is_loopback(host: str) -> bool:
-    """host 是否只对本机可见。用 ipaddress 判定，等价写法（127.0.0.2、::1 的
-    全写形式等）也能识别，而不是靠一张字符串白名单。"""
-    h = str(host or "").strip().strip("[]").lower()
-    if h in ("localhost", ""):
-        return h == "localhost"
-    try:
-        import ipaddress
-
-        return ipaddress.ip_address(h).is_loopback
-    except ValueError:
-        return False
+    """host 是否只对本机可见（委托给 server 模块的统一实现）。"""
+    return _is_loopback_host(host)
 
 
 class SlaveMarket(Star):
@@ -108,26 +97,41 @@ class SlaveMarket(Star):
         logger.info(f"[奴隶市场] 插件已加载，共注册 {_ROUTE_COUNT} 条指令路由")
 
     def _bootstrap_admin_password(self) -> None:
-        """仅当从未设过 WebUI 密码时生成临时密码并标记 must_reset=True。
+        """未设过 WebUI 密码时初始化密码哈希。
+
+        优先级：配置里显式设了 webui_password → 直接以其建哈希（must_reset=False）；
+        否则生成随机临时密码并标记 must_reset=True。
 
         生成位置：
-          - 临时明文：data/plugin_data/<name>/admin_passwd.txt（仅出现一次）
+          - 临时明文（仅临时密码路径）：data/plugin_data/<name>/admin_passwd.txt（仅出现一次）
           - 摘要：data/plugin_data/<name>/admin_passwd.json 包含 Argon2id hash
         """
         store = PasswordStore(self._data_dir() / "admin_passwd.json")
         existing = store.get()
         if existing and existing.get("hash"):
-            # 已有哈希：什么都不做（旧配置里的明文密码将在 webui 启动时被
-            # server.py 中的迁移逻辑透明哈希，保留 legacy_password）
+            # 已有哈希：什么都不做（明文密码由 server.py 迁移逻辑透明哈希）
             return
-        # 生成临时明文密码：18 字符，URL-safe base64
+        # 配置里显式设过 webui_password：直接以它建哈希（无需改密），
+        # 而不是生成随机临时密码——否则用户配置的密码会被静默忽略。
+        configured = str((self.config or {}).get("webui_password", "") or "")
+        hasher = Argon2Hasher(
+            time_cost=int((self.config or {}).get("webui_hash_time_cost", 3) or 3),
+        )
+        if configured:
+            try:
+                rotate_password(
+                    store,
+                    hasher,
+                    configured,
+                    must_reset=False,
+                )
+            except AuthError as e:
+                logger.error(f"[奴隶市场] 写入配置密码失败：{e}")
+                return
+            return
+        # 未设配置密码：生成临时明文密码，18 字符，URL-safe base64
         temp = secrets.token_urlsafe(12)
         try:
-            hasher = Argon2Hasher(
-                time_cost=int(
-                    (self.config or {}).get("webui_hash_time_cost", 3) or 3
-                ),
-            )
             rotate_password(
                 store,
                 hasher,
@@ -135,29 +139,21 @@ class SlaveMarket(Star):
                 must_reset=True,
             )
         except AuthUnavailable:
-            logger.warning(
-                "[奴隶市场] argon2-cffi 未安装；WebUI 将以明文比对模式运行"
+            # argon2-cffi 未安装时，WebUIServer.__init__ 同样会 raise
+            # AuthUnavailable 并导致插件加载失败。此分支不可达——保留
+            # 仅是为了在异常链中提供更清晰的错误信息。
+            logger.error(
+                "[奴隶市场] argon2-cffi 未安装，WebUI 无法启动；"
+                "请执行 pip install argon2-cffi 后重载插件"
             )
-            # 在依赖缺失的兜底分支里：旧 server 用 self.legacy_password 直接比对。
-            # 把明文密码通过 self.config 透传过去（仅在依赖不可用时生效）。
-            self.config["webui_password"] = temp
-            (self._data_dir() / TEMP_PASSWORD_FILE).write_text(
-                "首次启动临时密码\n" + temp + "\n", "utf-8"
-            )
-            logger.warning(
-                f"[奴隶市场] 临时管理员密码：{temp}\n"
-                f"已写入 {self._data_dir() / TEMP_PASSWORD_FILE}（请尽快改密）"
-            )
-            return
+            raise
         except AuthError as e:
             logger.error(f"[奴隶市场] 生成临时密码失败：{e}")
             return
         # Argon2id 模式下：明文只写磁盘这一次，且明确告知用户
         tp = self._data_dir() / TEMP_PASSWORD_FILE
         tp.write_text(
-            "首次启动临时密码（仅出现一次，请尽快重置）\n"
-            + temp
-            + "\n",
+            "首次启动临时密码（仅出现一次，请尽快重置）\n" + temp + "\n",
             "utf-8",
         )
         logger.warning(
@@ -180,7 +176,12 @@ class SlaveMarket(Star):
                 "请在插件配置中设置 webui_password，或将 webui_host 改为 127.0.0.1。"
             )
             return
-        self._webui = WebUIServer(self.ctx, host, port, VERSION, logger, password=password)
+        # WebUIServer.__init__ 会同步做 SessionStore 建表（含 PRAGMA WAL）、
+        # 读密码哈希文件等磁盘 I/O，若在事件循环上构造会阻塞整个机器人。
+        # 用 to_thread 把构造挪到线程池，只把纯异步的 start() 留在事件循环上。
+        self._webui = await asyncio.to_thread(
+            WebUIServer, self.ctx, host, port, VERSION, logger, password=password
+        )
         try:
             await self._webui.start()
             logger.info(
@@ -204,15 +205,14 @@ class SlaveMarket(Star):
     async def terminate(self):
         """卸载/热重载：每一步都必须走到，且都不能无限期挂住。
 
-        渲染器关闭是跨进程 IPC，Chromium 卡死时会永久 pending；早期版本没给它
-        超时，导致后面的 db.close() 永远不执行，重载后遗留旧连接与旧浏览器进程。
+        渲染器关闭是跨进程 IPC，Chromium 卡死时会永久 pending，
+        因此每一步都带超时并 finally 兜底，绝不挂死。
 
-        修复后的清理顺序：
-        1. 拒新指令（清空锁表：旧的持有锁协程仍在跑，但没人新来，等它们退出）
-        2. WebUI 不再接新连接
+        清理顺序：
+        1. 拒新指令（清空锁表：持有的锁协程仍在跑，但没人新来，等它们退出）
+        2. WebUI 停止接新连接
         3. 渲染器关
         4. DB 关
-        每一步都带超时并 finally 兜底，绝不挂死。
         """
         # 1. 锁表先清：避免新指令撞上旧 loop 上的锁；持有方按协程退出自然释放
         locks = getattr(self, "_player_locks", None)
@@ -258,23 +258,41 @@ class SlaveMarket(Star):
     def _load_copywriting() -> dict:
         import json
 
-        path = Path(__file__).parent / "resources" / "data" / "workCopywriting.json"
-        fallback = {
-            "slaveowner": ["靠着家族的资助，获得收入"],
-            "success": ["搬了一天的砖，获得收入"],
-            "failure": ["摸鱼被抓了个正着，一分没挣着,[A]身价下降[C]->[D]"],
-            "expenses": ["你为奴隶购买了新饰品，花费了15金币。"],
-            "buyMaster": ["对不起，人家是尊贵的大奴隶主，不可以购买捏~"],
+        base = Path(__file__).parent / "resources" / "data"
+        # 打工文案 + 决斗/排位赛（动作/对手/事件/段位）文案，均随插件发布固定。
+        # 运行时经 WebUI 保存后由 ctx.set_copywriting 热更新，改文案无需改代码。
+        files = {
+            "workCopywriting.json": {
+                "slaveowner": ["靠着家族的资助，获得收入"],
+                "success": ["搬了一天的砖，获得收入"],
+                "failure": ["摸鱼被抓了个正着，一分没挣着,[A]身价下降[C]->[D]"],
+                "expenses": ["你为奴隶购买了新饰品，花费了15金币。"],
+                "buyMaster": ["对不起，人家是尊贵的大奴隶主，不可以购买捏~"],
+            },
+            "gameTexts.json": {
+                "arena_actions": ["使出浑身解数"],
+                "ranking_opponents": [
+                    {"name": "流浪剑客", "score": 800, "specialEffect": "剑术精湛，容易造成暴击"}
+                ],
+                "ranking_events": [
+                    {"name": "天气晴朗", "effect": 1.1, "desc": "状态绝佳"}
+                ],
+                "ranking_tiers": [[1000, "青铜"]],
+            },
         }
-        try:
-            data = json.loads(path.read_text("utf-8"))
-        except (OSError, ValueError) as e:
-            logger.warning(f"[奴隶市场] 文案文件加载失败，使用内置文案：{e}")
-            return fallback
-        merged = {k: list(v) for k, v in fallback.items()}
-        for k, v in data.items():
-            if isinstance(v, list) and v:
-                merged[k] = v
+        merged: dict = {}
+        for fname, fallback in files.items():
+            try:
+                data = json.loads((base / fname).read_text("utf-8"))
+            except (OSError, ValueError) as e:
+                logger.warning(f"[奴隶市场] 文案文件 {fname} 加载失败，使用内置文案：{e}")
+                data = {}
+            for k, fv in fallback.items():
+                v = data.get(k)
+                if isinstance(v, list) and v:
+                    merged[k] = v
+                else:
+                    merged[k] = fv
         return merged
 
 

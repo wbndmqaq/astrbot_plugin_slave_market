@@ -4,7 +4,7 @@
 - 同步内部方法用 threading.RLock 串行化（to_thread 可能并发进入不同线程）。
 - 跨玩家结算必须走 `transact()`：整段「读→改→写」在同一线程、同一锁、同一事务内完成，
   杜绝「load 与 save 之间被其他指令插入」导致的整行覆盖与丢失更新。
-- 备份用 `VACUUM INTO` 生成一致性快照；恢复前校验来源库并自动留一份保命快照。
+- 备份用 sqlite3.Connection.backup() 生成一致性快照；恢复前校验来源库并自动留一份保命快照。
 - 删除存档前整行挪入 trash 留档，并清理其他玩家对该 uid 的主/奴引用。
 """
 
@@ -14,14 +14,13 @@ import asyncio
 import contextlib
 import copy
 import json
-import logging
 import math
 import sqlite3
 import threading
 import time
 from pathlib import Path
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 # 昵称最大存储长度（防止异常输入把行撑大）
 _NICK_MAX = 64
@@ -224,7 +223,7 @@ _COLS = [
     "bank_last_interest",
 ]
 
-# 列 -> DDL 片段，供 _migrate() 给旧库补列。键名与 _SCHEMA 中的列名一一对应；
+# 列 -> DDL 片段，供 _migrate() 给缺列的存档补建。键名与 _SCHEMA 中的列名一一对应；
 # _migrate 用 PRAGMA table_info(players) 拿到缺列名后逐项 ALTER TABLE 补建，
 # 不依赖 DDL 字符串与 _SCHEMA 完全相同——加新列时只需在这里登记即可。
 _COL_DDL = {
@@ -252,7 +251,7 @@ _COL_DDL = {
     "bank_upgrade_price": "INTEGER DEFAULT 100",
     "bank_last_interest": "INTEGER DEFAULT 0",
     "updated_at": "INTEGER DEFAULT 0",
-    "broken": "INTEGER DEFAULT 0",  # 1 = 已取证到 trash；后续 _read_row 不再写
+    "broken": "INTEGER DEFAULT 0",  # 1 = 已取证到 trash；后续 _read_row 跳过该行
 }
 # bad-row 一旦留档就置 1，避免 _read_row 每次都往 trash 里再插一份
 
@@ -430,9 +429,9 @@ class PlayerDB:
         self._lock = threading.RLock()
         self._closed = False
         # in-flight to_thread worker 计数：close() 在持锁时仍然会等它们自己释放
-        # （因为 RLock 同一线程可重入、worker 退出后 _lock 真正空闲），
-        # 但旧实现的问题不是死锁，是"close 与 worker 并发"导致 worker 撞到
-        # ProgrammingError。close 之前先看看有没有 worker 仍在跑，给两次重试。
+        # （因为 RLock 同一线程可重入、worker 退出后 _lock 真正空闲）。
+        # close 之前先检查是否有 worker 仍在跑，给两次重试，
+        # 避免 close 与 worker 并发导致 worker 撞到 ProgrammingError。
         self._inflight = 0
         self._inflight_cv = threading.Condition(self._lock)
 
@@ -462,13 +461,7 @@ class PlayerDB:
     def _connect(self) -> sqlite3.Connection:
         """打开一条**短生命周期**连接（仅当前线程/同步方法内使用）。
 
-        早期版本用一个 `self._conn` 长连接 + `check_same_thread=False`，
-        但 to_thread 池里多个 worker 会同时操作同一条连接，
-        一旦 `_close()` 被任何线程触发，其他 worker 立即抛
-        "Cannot operate on a closed database"。
-        长连接还会在 WAL 重连、热重载时被锁在旧文件上。
-
-        现在改为每次调用 `_connect` 新开一条：
+        每次调用新开一条连接，配合 to_thread 池安全使用：
         - `timeout=15` 给 SQLITE_BUSY 一个折中的等待窗口
         - 行工厂 Row 每次都设（小开销，换来稳定访问）
         - WAL 模式每次都启用（持久生效）
@@ -483,10 +476,8 @@ class PlayerDB:
         return conn
 
     def _close(self) -> None:
-        """把长连接缓存置为关闭：实际 SQLITE 连接由各 sync 方法用完自己关。
-
-        现在 `_connect` 每次新建短连接，本方法主要是把 `_closed` 置位让后续
-        `_connect()` 立即报错。多线程 to_thread 不再被共享 conn 卡死。"""
+        """置位 `_closed`，让后续 `_connect()` 立即报错。
+        实际 SQLite 连接由各 sync 方法用完即关。"""
         if self._conn is not None:
             try:
                 self._conn.close()
@@ -525,7 +516,7 @@ class PlayerDB:
                     conn.close()
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
-        """补齐旧库缺失的列：老存档不会因为新版本加字段而整行解析失败。"""
+        """补齐存档缺失的列，防止新版本加字段后整行解析失败。"""
         have = {r["name"] for r in conn.execute("PRAGMA table_info(players)")}
         for col, ddl in _COL_DDL.items():
             if col not in have:
@@ -534,7 +525,9 @@ class PlayerDB:
 
     # ---------- 玩家级操作 ----------
 
-    def _read_row(self, conn: sqlite3.Connection, gid: str, uid: str) -> tuple[dict, bool]:
+    def _read_row(
+        self, conn: sqlite3.Connection, gid: str, uid: str
+    ) -> tuple[dict, bool]:
         """读单行 -> (玩家数据, 是否已有存档行)。解析失败时先留档再降级为新号。
 
         已取证过的坏行（broken=1）直接返回空号：避免每次读都往 trash 里再插一份，
@@ -618,10 +611,14 @@ class PlayerDB:
     def _exists_sync(self, gid: str, uid: str) -> bool:
         with self._lock:
             with self._inflight_guard():
-                cur = self._connect().execute(
-                    "SELECT 1 FROM players WHERE gid=? AND uid=?", (gid, uid)
-                )
-                return cur.fetchone() is not None
+                conn = self._connect()
+                try:
+                    cur = conn.execute(
+                        "SELECT 1 FROM players WHERE gid=? AND uid=?", (gid, uid)
+                    )
+                    return cur.fetchone() is not None
+                finally:
+                    conn.close()
 
     async def load(self, group_id: str, user_id: str) -> dict:
         return await asyncio.to_thread(self._load_sync, str(group_id), str(user_id))
@@ -665,19 +662,24 @@ class PlayerDB:
         with self._lock:
             with self._inflight_guard():
                 conn = self._connect()
-                row = conn.execute(
-                    "SELECT * FROM players WHERE gid=? AND uid=?", (gid, uid)
-                ).fetchone()
-                if row is None:
-                    return
                 try:
-                    self._archive_row(conn, gid, uid, row, reason="deleted")
-                    conn.execute("DELETE FROM players WHERE gid=? AND uid=?", (gid, uid))
-                    self._unlink_refs(conn, gid, uid)
-                    conn.commit()
-                except Exception:
-                    conn.rollback()  # 防止部分语句残留到下一事务
-                    raise
+                    row = conn.execute(
+                        "SELECT * FROM players WHERE gid=? AND uid=?", (gid, uid)
+                    ).fetchone()
+                    if row is None:
+                        return
+                    try:
+                        self._archive_row(conn, gid, uid, row, reason="deleted")
+                        conn.execute(
+                            "DELETE FROM players WHERE gid=? AND uid=?", (gid, uid)
+                        )
+                        self._unlink_refs(conn, gid, uid)
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()  # 防止部分语句残留到下一事务
+                        raise
+                finally:
+                    conn.close()
 
     def _unlink_refs(self, conn: sqlite3.Connection, gid: str, uid: str) -> None:
         """清理悬空引用：别人的 master 指向它、或 slave 列表里含它。"""
@@ -713,22 +715,21 @@ class PlayerDB:
     # ---------- 群级操作 ----------
 
     async def set_card(self, group_id: str, user_id: str, card: str) -> None:
-        """登记平台昵称。只更新已有存档，**不为未参与游戏的人建档**。
-
-        早期版本这里用 INSERT OR IGNORE 建档，会让任何被 @ 到的人以默认身价
-        出现在市场与排行榜里（幽灵玩家），也让 exists() 无法判断"是否玩过"。
-        """
+        """登记平台昵称。只更新已有存档，**不为未参与游戏的人建档**。"""
         await asyncio.to_thread(self._set_card_sync, str(group_id), str(user_id), card)
 
     def _set_card_sync(self, gid: str, uid: str, card: str) -> None:
         with self._lock:
             with self._inflight_guard():
                 conn = self._connect()
-                conn.execute(
-                    "UPDATE players SET nickname=?, updated_at=? WHERE gid=? AND uid=?",
-                    (str(card or "")[:_NICK_MAX], int(time.time()), gid, uid),
-                )
-                conn.commit()
+                try:
+                    conn.execute(
+                        "UPDATE players SET nickname=?, updated_at=? WHERE gid=? AND uid=?",
+                        (str(card or "")[:_NICK_MAX], int(time.time()), gid, uid),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
 
     async def list_players(self, group_id: str) -> list[str]:
         return await asyncio.to_thread(self._list_players_sync, str(group_id))
@@ -736,10 +737,14 @@ class PlayerDB:
     def _list_players_sync(self, gid: str) -> list[str]:
         with self._lock:
             with self._inflight_guard():
-                cur = self._connect().execute(
-                    "SELECT uid FROM players WHERE gid=? ORDER BY uid", (gid,)
-                )
-                return [r["uid"] for r in cur.fetchall()]
+                conn = self._connect()
+                try:
+                    cur = conn.execute(
+                        "SELECT uid FROM players WHERE gid=? ORDER BY uid", (gid,)
+                    )
+                    return [r["uid"] for r in cur.fetchall()]
+                finally:
+                    conn.close()
 
     async def list_groups(self) -> list[str]:
         return [g["gid"] for g in await self.group_counts()]
@@ -750,10 +755,16 @@ class PlayerDB:
     def _group_counts_sync(self) -> list[dict]:
         with self._lock:
             with self._inflight_guard():
-                cur = self._connect().execute(
-                    "SELECT gid, COUNT(*) AS n FROM players GROUP BY gid ORDER BY gid"
-                )
-                return [{"gid": r["gid"], "count": int(r["n"])} for r in cur.fetchall()]
+                conn = self._connect()
+                try:
+                    cur = conn.execute(
+                        "SELECT gid, COUNT(*) AS n FROM players GROUP BY gid ORDER BY gid"
+                    )
+                    return [
+                        {"gid": r["gid"], "count": int(r["n"])} for r in cur.fetchall()
+                    ]
+                finally:
+                    conn.close()
 
     # ---------- 聚合查询（避免"列 id 再逐个 load"的 N+1） ----------
 
@@ -763,10 +774,14 @@ class PlayerDB:
     def _count_players_sync(self, gid: str) -> int:
         with self._lock:
             with self._inflight_guard():
-                cur = self._connect().execute(
-                    "SELECT COUNT(*) AS n FROM players WHERE gid=?", (gid,)
-                )
-                return int(cur.fetchone()["n"])
+                conn = self._connect()
+                try:
+                    cur = conn.execute(
+                        "SELECT COUNT(*) AS n FROM players WHERE gid=?", (gid,)
+                    )
+                    return int(cur.fetchone()["n"])
+                finally:
+                    conn.close()
 
     async def query_players(
         self,
@@ -819,15 +834,18 @@ class PlayerDB:
         with self._lock:
             with self._inflight_guard():
                 conn = self._connect()
-                rows = conn.execute(sql, params).fetchall()
-                for row in rows:
-                    try:
-                        out.append((row["uid"], _row_to_player(row)))
-                    except Exception as e:  # noqa: BLE001
-                        logger.error(
-                            "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
-                        )
-                conn.commit()
+                try:
+                    rows = conn.execute(sql, params).fetchall()
+                    for row in rows:
+                        try:
+                            out.append((row["uid"], _row_to_player(row)))
+                        except Exception as e:  # noqa: BLE001
+                            logger.error(
+                                "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
+                            )
+                    conn.commit()
+                finally:
+                    conn.close()
         return out
 
     def _query_players_sync(
@@ -846,38 +864,45 @@ class PlayerDB:
         with self._lock:
             with self._inflight_guard():
                 conn = self._connect()
-                rows = conn.execute(sql, params).fetchall()
-                for row in rows:
-                    try:
-                        out.append((row["uid"], _row_to_player(row)))
-                    except Exception as e:  # noqa: BLE001
-                        logger.error(
-                            "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
-                        )
-                conn.commit()
+                try:
+                    rows = conn.execute(sql, params).fetchall()
+                    for row in rows:
+                        try:
+                            out.append((row["uid"], _row_to_player(row)))
+                        except Exception as e:  # noqa: BLE001
+                            logger.error(
+                                "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
+                            )
+                    conn.commit()
+                finally:
+                    conn.close()
         return out
 
     async def totals(self) -> dict:
-        """全局统计：一条 SQL 出结果，不再逐个玩家 load。"""
+        """全局统计：单条聚合 SQL 直接出结果。"""
         return await asyncio.to_thread(self._totals_sync)
 
     def _totals_sync(self) -> dict:
         with self._lock:
             with self._inflight_guard():
-                r = self._connect().execute(
-                    "SELECT COUNT(*) AS players, COUNT(DISTINCT gid) AS groups,"
-                    " COALESCE(SUM(currency),0) AS currency,"
-                    " COALESCE(SUM(bank_balance),0) AS bank,"
-                    " COALESCE(SUM(CASE WHEN master<>'' THEN 1 ELSE 0 END),0) AS slaves"
-                    " FROM players"
-                ).fetchone()
-                return {
-                    "players": int(r["players"]),
-                    "groups": int(r["groups"]),
-                    "currency": _to_float(r["currency"]),
-                    "bank": _to_float(r["bank"]),
-                    "slaves": int(r["slaves"]),
-                }
+                conn = self._connect()
+                try:
+                    r = conn.execute(
+                        "SELECT COUNT(*) AS players, COUNT(DISTINCT gid) AS groups,"
+                        " COALESCE(SUM(currency),0) AS currency,"
+                        " COALESCE(SUM(bank_balance),0) AS bank,"
+                        " COALESCE(SUM(CASE WHEN master<>'' THEN 1 ELSE 0 END),0) AS slaves"
+                        " FROM players"
+                    ).fetchone()
+                    return {
+                        "players": int(r["players"]),
+                        "groups": int(r["groups"]),
+                        "currency": _to_float(r["currency"]),
+                        "bank": _to_float(r["bank"]),
+                        "slaves": int(r["slaves"]),
+                    }
+                finally:
+                    conn.close()
 
     # ---------- 全量备份 / 恢复 ----------
 
@@ -1025,9 +1050,12 @@ class PlayerDB:
                     raise
                 # 立刻重连并补齐结构，避免下一条指令拿到半初始化的库
                 conn = self._connect()
-                conn.executescript(_SCHEMA)
-                self._migrate(conn)
-                conn.commit()
+                try:
+                    conn.executescript(_SCHEMA)
+                    self._migrate(conn)
+                    conn.commit()
+                finally:
+                    conn.close()
         return name
 
     def _list_backups_sync(self) -> list[str]:
@@ -1069,6 +1097,7 @@ class PlayerDB:
         # _inflight_cv 等一会儿，再 _close 并标记 _closed=True；新 worker
         # 进入 _connect() 会看到 _closed=True 直接抛 ProgrammingError。
         import time as _t
+
         deadline = _t.monotonic() + 5.0  # 给正在跑的事务最多 5s 自然退出
         with self._lock:
             while self._inflight > 0 and _t.monotonic() < deadline:

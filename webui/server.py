@@ -94,7 +94,7 @@ def _is_loopback_host(host: str) -> bool:
 async def _error_middleware(request, handler):
     """全局兜底：任何端点内部异常都返回 JSON 错误，而不是裸 500。
 
-    细节只写日志，不回传前端（旧版会把绝对路径与异常内容一起吐出去）。
+    细节只写日志，不回传前端。
     """
     try:
         return await handler(request)
@@ -119,7 +119,7 @@ class WebUIServer:
         self.legacy_password = str(password or "")
         self.auth_on = bool(self.legacy_password)
         # JWT secret 用安全随机源生成；不暴露给外部模块，只在 server 内使用。
-        # 每次进程启动重新生成 -> 老 cookie 立刻失效，避免上版本泄漏。
+        # 每次进程启动重新生成，老 cookie 立刻失效。
         self._jwt_secret = secrets.token_bytes(48)
         try:
             self._issuer = JWTIssuer(self._jwt_secret)
@@ -138,23 +138,22 @@ class WebUIServer:
         # 服务端会话表与密码哈希文件存到 plugin_data 目录
         data_dir = Path(self.ctx.data_root)
         self._sessions = SessionStore(data_dir / "webui_sessions.db")
+        # 启动时清理过期会话，避免 webui_sessions.db 无限膨胀
+        try:
+            self._sessions.gc()
+        except Exception:  # noqa: BLE001
+            self.log.warning("[奴隶市场] 启动时会话清理失败（已忽略）")
         self._pwd_store = PasswordStore(data_dir / "admin_passwd.json")
         # 启动时若没有密码记录，把调用方传过来的 password 当作"已存在的密码"
-        # 写一次哈希进去（仅当 legacy_password 不为空）。这是为了兼容：
-        # 旧版本配置文件里仍然存着明文 webui_password，启动时迁移到哈希存储。
+        # 写一次哈希进去（仅当 legacy_password 不为空），兼容配置文件里的明文
+        # webui_password，启动时迁移到哈希存储。
         existing = self._pwd_store.get()
+        # 旧版明文密码迁移：__init__ 不能 await，把需要做的 Argon2id 哈希
+        # 推迟到 start() 里经 asyncio.to_thread 执行，不阻塞事件循环
+        self._pending_legacy_migration = False
         if not existing or not existing.get("hash"):
             if self.legacy_password:
-                st = rotate_password(
-                    self._pwd_store,
-                    self._hasher,
-                    self.legacy_password,
-                    must_reset=False,
-                )
-                self.log.info(
-                    "[奴隶市场] WebUI 旧版明文密码已迁移为 Argon2id 哈希（首次登录后建议改密）"
-                )
-                self.auth_on = True
+                self._pending_legacy_migration = True
             else:
                 # 没有 legacy password 也不存在密码文件：留给 main.initialize()
                 # 在启动前/后生成临时密码；这里不主动设置 must_reset。
@@ -202,9 +201,7 @@ class WebUIServer:
         except AuthError:
             return None
         # 服务端二次校验：JWT 过了不代表服务端还认这个 jti
-        if not await asyncio.to_thread(
-            self._sessions.exists, payload.get("jti", "")
-        ):
+        if not await asyncio.to_thread(self._sessions.exists, payload.get("jti", "")):
             return None
         return payload
 
@@ -250,10 +247,10 @@ class WebUIServer:
             return True
         origin = request.headers.get("Origin")
         if origin:
-            # 严格同源比对：scheme+host+port 必须完全相等。旧版 endswith 子串可被
-            # "https://evil.com//127.0.0.1:17818" 这种 path 绕过，urlparse 会
-            # 拆掉 path/query，校验只比对真正的 netloc。
+            # 严格同源比对：scheme+host+port 必须完全相等。
+            # urlparse 会拆掉 path/query，校验只比对真正的 netloc。
             from urllib.parse import urlparse
+
             try:
                 o = urlparse(origin)
             except ValueError:
@@ -291,13 +288,11 @@ class WebUIServer:
         """返回 True 表示该 IP 当前在限速窗口内、应返回 429。
 
         维护策略：
-        - 每次调用都按 LOGIN_WINDOW 过滤一次该 IP 的失败时间戳，过期剔除。
-          旧版只在 len(_fails) > 1000 时才清 stale，意味着一个非限速 IP 的
-          失败时间戳可以一直在表里占位（每失败一次 _fails[ip] 就 append
-          一次），长期累积成内存炸弹。
+        - 每次调用都按 LOGIN_WINDOW 过滤一次该 IP 的失败时间戳，过期剔除，
+          避免失败记录长期累积占内存。
         - 已限速 IP（hits >= LOGIN_MAX_FAILS）不能被容量保护策略淘汰掉，
-          否则攻击者一旦把 IP 撞到限速状态，再让另一个 IP 失败到容量上限，
-          原来的限速记录就被清理掉，可绕过 —— 这里"续命"成永久在表里。
+          否则攻击者把 IP 撞到限速后，可让另一个 IP 失败到容量上限来清除
+          原限速记录绕过限制。
         - 总容量 1000 上限只约束"未限速 IP"；限速 IP 跟随一次性涨到 ~2**32。
           实际 1000 个限速 IP 已足够覆盖常见的攻击规模。
         """
@@ -340,20 +335,24 @@ class WebUIServer:
             if not self._csrf_ok(request):
                 return _json({"error": "请求被拒绝（跨站保护）"}, 403)
             if path not in PUBLIC_PATHS:
-                if not await self._authed_token(request):
-                    return self._unauth()
-                # 强制改密期间：除 change-password / logout / meta / check 外，
-                # 全部以 423 拒绝，前端用它触发 reset overlay
-                if self._must_reset() and path not in (
-                    "/api/auth/change-password",
-                    "/api/auth/logout",
-                    "/api/auth/check",
-                    "/api/meta",
-                ):
-                    return _json(
-                        {"error": "首次登录必须重置密码", "must_reset": True},
-                        423,
-                    )
+                # 无密码模式（仅本机监听 + 写操作带自定义头）下鉴权完全放行：
+                # 此时不会签发 JWT，若仍强行要求 token，前端所有需要鉴权的
+                # 接口（/api/overview、/api/groups 等）都会拿到 401，面板整体不可用。
+                if self.auth_on:
+                    if not await self._authed_token(request):
+                        return self._unauth()
+                    # 强制改密期间：除 change-password / logout / meta / check 外，
+                    # 全部以 423 拒绝，前端用它触发 reset overlay
+                    if self._must_reset() and path not in (
+                        "/api/auth/change-password",
+                        "/api/auth/logout",
+                        "/api/auth/check",
+                        "/api/meta",
+                    ):
+                        return _json(
+                            {"error": "首次登录必须重置密码", "must_reset": True},
+                            423,
+                        )
         return await handler(request)
 
     async def _body(self, request) -> tuple[dict, web.Response | None]:
@@ -377,6 +376,23 @@ class WebUIServer:
         return n if n >= 1 else None
 
     async def start(self):
+        # 旧版明文密码迁移（Argon2id 哈希是 CPU 密集型，不能在 __init__ 里同步做）
+        if getattr(self, "_pending_legacy_migration", False):
+            try:
+                await asyncio.to_thread(
+                    rotate_password,
+                    self._pwd_store,
+                    self._hasher,
+                    self.legacy_password,
+                    must_reset=False,
+                )
+                self.auth_on = True
+                self.log.info(
+                    "[奴隶市场] WebUI 旧版明文密码已迁移为 Argon2id 哈希（首次登录后建议改密）"
+                )
+            except Exception as e:  # noqa: BLE001
+                self.log.error("[奴隶市场] 旧版密码迁移失败：%s", e)
+            self._pending_legacy_migration = False
         app = web.Application(middlewares=[_error_middleware, self._guard])
         app["slvm_server"] = self
         r = app.router
@@ -525,6 +541,11 @@ class WebUIServer:
             request.headers.get("User-Agent", ""),
             ttl=ttl,
         )
+        # 顺带清理过期会话：单条 DELETE，开销极低，避免长期运行时 sessions 表膨胀
+        try:
+            await asyncio.to_thread(self._sessions.gc)
+        except Exception:  # noqa: BLE001
+            pass
         resp = _json(
             {
                 "ok": True,
@@ -565,7 +586,11 @@ class WebUIServer:
                 "ok": ok,
                 "must_reset": must_reset,
                 "show_password_plain": bool(
-                    (self.ctx.config.get("webui_show_password_plain") if self.ctx.config else False)
+                    (
+                        self.ctx.config.get("webui_show_password_plain")
+                        if self.ctx.config
+                        else False
+                    )
                 ),
             }
         )
@@ -596,11 +621,10 @@ class WebUIServer:
         # 校验 new
         new_bytes = new_pwd.encode("utf-8") if new_pwd else b""
         if len(new_bytes) < 6 or len(new_bytes) > 128:
-            return _json(
-                {"error": "新密码长度需在 6~128 字节之间（UTF-8）"}, 400
-            )
+            return _json({"error": "新密码长度需在 6~128 字节之间（UTF-8）"}, 400)
         try:
-            rotate_password(
+            await asyncio.to_thread(
+                rotate_password,
                 self._pwd_store,
                 self._hasher,
                 new_pwd,
@@ -613,8 +637,8 @@ class WebUIServer:
         cur_jti = payload.get("jti")
         # 全部先吊销
         n = await asyncio.to_thread(self._sessions.revoke_all)
-        # 再把当前会话放回去（如果它还在的话）
-        if cur_jti and await self._authed_token(request):
+        # 再把当前会话放回去（JWT 仍有效，直接重写会话表即可）
+        if cur_jti:
             ip = request.remote or ""
             ua = request.headers.get("User-Agent", "")
             await asyncio.to_thread(
@@ -624,21 +648,24 @@ class WebUIServer:
         return _json({"ok": True, "revoked": n})
 
     async def _cleanup_temp_password_file(self) -> None:
-        try:
-            p = self.ctx.data_root / TEMP_PASSWORD_FILE
-            if p.exists():
-                # 不要在 cookie/前端回显后立即删：用户可能还没复制。
-                # 改成：覆盖一次再删除，确保磁盘恢复后无法恢复。
-                try:
-                    p.write_text(
-                        "已使用\n" + secrets.token_hex(64),
-                        "utf-8",
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
-                p.unlink(missing_ok=True)
-        except Exception:  # noqa: BLE001 - 任何清理失败都不阻断登录
-            pass
+        """登录成功后清理临时密码文件（覆盖再删，防磁盘恢复还原）。"""
+        path = self.ctx.data_root / TEMP_PASSWORD_FILE
+
+        def _do() -> None:
+            try:
+                if path.exists():
+                    try:
+                        path.write_text(
+                            "已使用\n" + secrets.token_hex(64),
+                            "utf-8",
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    path.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001 - 任何清理失败都不阻断登录
+                pass
+
+        await asyncio.to_thread(_do)
 
     # ===== 公开 =====
 
@@ -692,11 +719,9 @@ class WebUIServer:
             size = min(200, max(1, int(request.query.get("size", str(PAGE_SIZE)))))
         except (TypeError, ValueError):
             size = PAGE_SIZE
-        # 分页下推到 SQL：不再把整群玩家全量读出来再切片
+        # 分页下推到 SQL，避免全量读取再切片
         total, players = await self.ctx.service.page_profiles(gid, page, size)
-        return _json(
-            {"total": total, "page": page, "size": size, "players": players}
-        )
+        return _json({"total": total, "page": page, "size": size, "players": players})
 
     async def _search(self, request):
         gid = request.query.get("gid", "")
@@ -914,8 +939,7 @@ class WebUIServer:
                 return self._clamp(int(v) if tp == "int" else v, meta)
             if tp == "list":
                 if isinstance(raw, str):
-                    # 前端是"每行一个"，这里只按换行切；旧版还按逗号切，
-                    # 会把含逗号的条目劈成两条
+                    # 前端是"每行一个"，这里只按换行切
                     raw = raw.splitlines()
                 if not isinstance(raw, (list, tuple)):
                     notes.append(f"{label}：不是列表，已忽略")
@@ -983,7 +1007,7 @@ class WebUIServer:
                 # webui_password 走单独的"重哈希"通道：存的是明文，磁盘上是 Argon2id
                 if k == "webui_password" and v:
                     try:
-                        self._do_change_password_to(v)
+                        await asyncio.to_thread(self._do_change_password_to, str(v))
                         notes.append("管理员密码已更新（已用 Argon2id 重哈希）")
                         applied += 1
                         password_changed = True
@@ -995,10 +1019,10 @@ class WebUIServer:
             save = getattr(target, "save_config", None)
             persisted = False
             if callable(save):
-                # save_config 历史上是同步函数，但 AstrBot 升级后可能改成 async；
-                # 把 coroutine 塞进 to_thread 会一直 pending，看起来"持久化成功"
-                # 但实际从未执行，所以分两种调用方式
+                # save_config 可能是同步或异步函数；
+                # 把 coroutine 塞进 to_thread 会一直 pending，所以分两种调用方式
                 import inspect
+
                 if inspect.iscoroutinefunction(save):
                     await save()
                 else:
@@ -1025,7 +1049,8 @@ class WebUIServer:
         if "backupKeep" in values:
             self.ctx.service.db.backup_keep = max(0, int(target.get("backupKeep") or 0))
         if isinstance(values.get("bank"), dict) and any(
-            k in values["bank"] for k in ("initialLevel", "initialLimit", "initialUpgradePrice")
+            k in values["bank"]
+            for k in ("initialLevel", "initialLimit", "initialUpgradePrice")
         ):
             self.ctx.service.db.set_bank_init(target.get("bank") or {})
         # 这些项只在启动时读取，改完必须重载插件才生效
@@ -1041,9 +1066,8 @@ class WebUIServer:
     def _do_change_password_to(self, plaintext: str) -> None:
         """把磁盘上的密码哈希替换为 plaintext 的 Argon2id 哈希。
 
-        不再依赖任何 marker / legacy_password 旁路：调用方通过
-        `_admin_config_save` 循环内显式 `password_changed = True` 来标记，
-        再在循环外统一把 self.auth_on 置位。
+        调用方通过 `_admin_config_save` 循环内显式 `password_changed = True`
+        来标记，再在循环外统一把 self.auth_on 置位。
         """
         rotate_password(
             self._pwd_store,
@@ -1055,7 +1079,7 @@ class WebUIServer:
     # ===== 文案编辑（游戏文案 + 帮助长文本）=====
 
     # 文件名 -> 相对 resources/ 的子目录
-    _TEXT_DIRS = {"workCopywriting": "data", "help": "texts"}
+    _TEXT_DIRS = {"workCopywriting": "data", "gameTexts": "data", "help": "texts"}
 
     def _texts_root(self) -> Path:
         return Path(__file__).resolve().parent.parent / "resources"
@@ -1076,6 +1100,8 @@ class WebUIServer:
         """返回错误消息；None 表示校验通过。"""
         if not isinstance(data, dict) or not data:
             return "内容为空"
+        if name == "gameTexts":
+            return self._validate_game_texts(data)
         for k, v in data.items():
             if not isinstance(k, str) or not re.fullmatch(r"[A-Za-z0-9_]+", k):
                 return f"非法键名：{str(k)[:30]}"
@@ -1115,6 +1141,76 @@ class WebUIServer:
                 return f"以下文案不能为空：{'、'.join(missing)}"
         return None
 
+    def _validate_game_texts(self, data) -> str | None:
+        """决斗/排位赛文案校验：结构非法或内容超限则拒绝保存。
+
+        gameTexts 的键是固定的（service.py 直接按 key 下标访问），缺键或
+        类型不对会让决斗/排位赛指令在运行时抛异常，所以这里逐键强校验。
+        """
+        allowed = {"arena_actions", "ranking_opponents", "ranking_events", "ranking_tiers"}
+        for k, v in data.items():
+            if not isinstance(k, str) or not re.fullmatch(r"[A-Za-z0-9_]+", k):
+                return f"非法键名：{str(k)[:30]}"
+            if k not in allowed:
+                return f"未知键：{k}"
+        if "arena_actions" in data:
+            v = data["arena_actions"]
+            if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                return "键 arena_actions 的值必须是字符串数组"
+            if len(v) > _TEXT_ITEMS_MAX:
+                return f"键 arena_actions 的条目过多（上限 {_TEXT_ITEMS_MAX} 条）"
+            for x in v:
+                if not x.strip() or len(x) > _TEXT_LEN_MAX:
+                    return f"键 arena_actions 有条目为空或超过 {_TEXT_LEN_MAX} 字"
+        if "ranking_opponents" in data:
+            v = data["ranking_opponents"]
+            if not isinstance(v, list) or not v:
+                return "键 ranking_opponents 必须是非空数组"
+            for i, o in enumerate(v, 1):
+                if not isinstance(o, dict):
+                    return f"第 {i} 个对手结构非法"
+                if not isinstance(o.get("name"), str) or not o["name"].strip():
+                    return f"第 {i} 个对手缺少名称"
+                try:
+                    int(o.get("score"))
+                except (TypeError, ValueError):
+                    return f"第 {i} 个对手的 score 必须是数字"
+                if not isinstance(o.get("specialEffect"), str):
+                    return f"第 {i} 个对手的 specialEffect 必须是字符串"
+        if "ranking_events" in data:
+            v = data["ranking_events"]
+            if not isinstance(v, list) or not v:
+                return "键 ranking_events 必须是非空数组"
+            for i, e in enumerate(v, 1):
+                if not isinstance(e, dict):
+                    return f"第 {i} 个事件结构非法"
+                if not isinstance(e.get("name"), str) or not e["name"].strip():
+                    return f"第 {i} 个事件缺少名称"
+                try:
+                    float(e.get("effect"))
+                except (TypeError, ValueError):
+                    return f"第 {i} 个事件的 effect 必须是数字"
+                if not isinstance(e.get("desc"), str):
+                    return f"第 {i} 个事件的 desc 必须是字符串"
+        if "ranking_tiers" in data:
+            v = data["ranking_tiers"]
+            if not isinstance(v, list) or not v:
+                return "键 ranking_tiers 必须是非空数组"
+            prev = None
+            for i, t in enumerate(v, 1):
+                if not isinstance(t, (list, tuple)) or len(t) != 2:
+                    return f"第 {i} 个段位必须是 [分数, 名称] 二元组"
+                try:
+                    score = int(t[0])
+                except (TypeError, ValueError):
+                    return f"第 {i} 个段位的分数必须是数字"
+                if not isinstance(t[1], str) or not t[1].strip():
+                    return f"第 {i} 个段位缺少名称"
+                if prev is not None and score <= prev:
+                    return "段位分数必须严格递增"
+                prev = score
+        return None
+
     @staticmethod
     def _write_atomic(path: Path, content: str) -> None:
         """原子写入，并保留一份最初的原始版本。
@@ -1131,7 +1227,9 @@ class WebUIServer:
                 bak.write_text(path.read_text("utf-8"), "utf-8")
             except OSError:
                 pass
-        tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+        tmp = path.with_suffix(
+            f"{path.suffix}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+        )
         try:
             tmp.write_text(content, "utf-8")
             os.replace(tmp, path)
@@ -1161,9 +1259,12 @@ class WebUIServer:
         target_path = self._texts_root() / self._TEXT_DIRS[name] / f"{name}.json"
         async with self._texts_lock:  # 串行化：并发保存不会写出半成品
             await asyncio.to_thread(self._write_atomic, target_path, content)
-        # 热更新运行中文案：workCopywriting -> 游戏文案；help -> 帮助长文本
+        # 热更新运行中文案：workCopywriting/gameTexts -> 游戏文案；help -> 帮助长文本
         if name == "workCopywriting":
             self.ctx.set_copywriting({k: list(v) for k, v in data.items()})
+        elif name == "gameTexts":
+            # 与既有文案合并而非整体替换：gameTexts 只含决斗/排位赛键
+            self.ctx.set_copywriting({**self.ctx.copy, **data})
         elif name == "help":
             await asyncio.to_thread(self.ctx.reload_texts)
         return _json({"ok": True, "keys": len(data)})

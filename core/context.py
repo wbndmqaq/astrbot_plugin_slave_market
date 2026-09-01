@@ -26,7 +26,6 @@ except ImportError:  # pragma: no cover
     from service import GameService  # type: ignore
     from texts import Texts  # type: ignore
 
-PLUGIN_NAME = "astrbot_plugin_slave_market"
 VERSION = "1.0.0"
 
 # 昵称缓存：条目 (expire_ts, card)；容量超限先清过期再清最旧
@@ -40,9 +39,8 @@ class GameCtx:
     def __init__(
         self, plugin, config: dict, data_root: Path, copywriting: dict, logger
     ):
-        self.plugin = (
-            plugin  # Star 实例，用于 context.send_message / get_registered_star
-        )
+        # plugin 参数保留兼容旧调用方（main.py 以 GameCtx(self, ...) 构造）；
+        # 插件实例仅经 self.service 依赖注入 db/renderer，本类不再持有该引用。
         self.config = config
         self.log = logger
         self.copy = copywriting

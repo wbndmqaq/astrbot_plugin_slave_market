@@ -30,7 +30,7 @@ astrbot_plugin_slave_market/
 │   └── system_cmds.py    #   帮助/数据备份（管理员）
 ├── core/
 │   ├── context.py        #   GameCtx 共享上下文（服务/数据库/渲染器/平台昵称拉取）
-│   ├── db.py             #   SQLite 存储层（WAL + VACUUM INTO 备份 + trash 回收站）
+│   ├── db.py             #   SQLite 存储层（WAL + Connection.backup() 快照 + trash 回收站）
 │   ├── service.py        #   游戏逻辑（返回统一 R 结构：tmpl+data+text 回退）
 │   ├── result.py         #   R 结果封装
 │   ├── texts.py          #   长文本加载器（resources/texts/*.json，可热更新）
@@ -39,7 +39,8 @@ astrbot_plugin_slave_market/
 │   ├── server.py         #   全量管理 API
 │   └── index.html / style.css / app.js
 └── resources/
-    ├── data/workCopywriting.json   # 游戏文案（WebUI 可在线编辑并热更新）
+    ├── data/workCopywriting.json   # 打工文案（WebUI 可在线编辑并热更新）
+    ├── data/gameTexts.json         # 决斗动作/排位赛对手/事件/段位文案（WebUI 可在线编辑并热更新）
     ├── texts/help.json             # 帮助长文本（WebUI 可在线编辑并热更新）
     └── templates/*.html            # 消息图片 Jinja2 模板
 ```
@@ -135,8 +136,8 @@ WebUI → 插件管理 → 本插件 → 重载。
 - **排行榜**：金币/身价/奴隶/银行四类，按群切换
 - **市场**：全群身价一览
 - **玩家**：分页列表、按 ID/昵称搜索、在线编辑（金币/身价/主人/银行）、删除存档（进回收站）
-- **备份**：创建/恢复/删除全量备份（`VACUUM INTO` 一致性快照）
-- **文案**：在线编辑打工文案与帮助长文本并热更新（无需重载插件）；帮助文案为可视化编辑——标题、分栏卡片、条目增删与排序都是表单操作，不用手写 JSON，纯文本兜底可按分栏一键生成
+- **备份**：创建/恢复/删除全量备份（`sqlite3.Connection.backup()` 一致性快照）
+- **文案**：在线编辑打工文案、决斗/排位赛文案（动作/对手/事件/段位）与帮助长文本并热更新（无需重载插件）；帮助文案为可视化编辑——标题、分栏卡片、条目增删与排序都是表单操作，不用手写 JSON，纯文本兜底可按分栏一键生成
 - **配置**：面板内直接修改插件配置（含嵌套配置组，密码留空保持原值）
 
 ---

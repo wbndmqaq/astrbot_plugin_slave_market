@@ -9,6 +9,7 @@
 import asyncio
 import contextlib
 import re
+import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -25,13 +26,18 @@ _SAFE_NAME = re.compile(r"[^A-Za-z0-9_-]+")
 class PlaywrightRenderer:
     def __init__(self, shot_dir: Path, scale: float = 2.0, logger=None):
         self.shot_dir = Path(shot_dir)
-        self.scale = max(1.0, float(scale))
+        # 与 _conf_schema.json 的 render_scale 上限保持一致：过高会让截图体积失控
+        self.scale = max(1.0, min(4.0, float(scale)))
         self.log = logger
         self._pw = None
         self._browser = None
         self._ctx = None
         self._env = None
         self._tmpl_cache: "OrderedDict[str, object]" = OrderedDict()
+        # 模板编译可能被多个 to_thread worker 并发调用（不同用户的指令
+        # 各自跑一个线程池 worker），用 threading.Lock 保护 _env/_tmpl_cache，
+        # 避免 check-then-act 竞态导致 OrderedDict 内部状态被并发破坏。
+        self._tmpl_lock = threading.Lock()
         self._lock = asyncio.Lock()
         self._seq = 0
         self._closed = False  # close() 之后拒绝再拉起浏览器
@@ -40,18 +46,19 @@ class PlaywrightRenderer:
 
     def render_template(self, template_str: str, data: dict) -> str:
         """同步方法：由调用方经 asyncio.to_thread 调用。编译结果按内容缓存。"""
-        if self._env is None:
-            from jinja2 import Environment
+        with self._tmpl_lock:
+            if self._env is None:
+                from jinja2 import Environment
 
-            # 自动转义：昵称等用户可控内容不注入 HTML
-            self._env = Environment(autoescape=True)
-        tmpl = self._tmpl_cache.get(template_str)
-        if tmpl is None:
-            tmpl = self._env.from_string(template_str)
-            self._tmpl_cache[template_str] = tmpl
-            # LRU 替换最久未用的；不再 clear() 一把梭（高频模板反复重编译）
-            while len(self._tmpl_cache) > 64:
-                self._tmpl_cache.popitem(last=False)
+                # 自动转义：昵称等用户可控内容不注入 HTML
+                self._env = Environment(autoescape=True)
+            tmpl = self._tmpl_cache.get(template_str)
+            if tmpl is None:
+                tmpl = self._env.from_string(template_str)
+                self._tmpl_cache[template_str] = tmpl
+                # LRU 替换最久未用的条目
+                while len(self._tmpl_cache) > 64:
+                    self._tmpl_cache.popitem(last=False)
         return tmpl.render(**data)
 
     # ---------- 截图 ----------
@@ -152,7 +159,7 @@ class PlaywrightRenderer:
                 )
             except Exception:
                 # 建 context 失败也要回收：先关浏览器（Playwright 会同步杀子进程），
-                # 再停 driver，状态归零。中间不再把 _browser 暴露给 _alive()。
+                # 再停 driver，状态归零；_browser 不暴露给 _alive()。
                 try:
                     await asyncio.wait_for(browser.close(), timeout=CLOSE_TIMEOUT)
                 except Exception:
@@ -208,7 +215,7 @@ class PlaywrightRenderer:
                     self.log.error(
                         f"[奴隶市场] renderer playwright 停止异常（可能存在孤儿进程）：{e}"
                     )
-            # 即便 stop 抛了也置空：driver 不再可用，保留会让下次 _launch 复用半死实例
+            # 即便 stop 抛了也置空：保留半死实例会让下次 _launch 复用
             self._pw = None
 
     def _cleanup(self):

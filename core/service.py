@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
+import json
 import math
 import random
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import ClassVar
 
 
@@ -38,6 +40,49 @@ BOARD_LIMIT = 15
 # 全量扫描型榜单（slave/bank）单次最多读多少行：超出只能近似截断，
 # 防止异常膨胀的库把整表读进内存
 FULL_SCAN_CAP = 10000
+
+# ---------------------------------------------------------------------------
+# 配置默认值 / min / max 的唯一事实来源：_conf_schema.json。
+# service.py 不再各自硬编码默认值，改配置只需动 schema 一处。
+# 读取失败（如以 .pyc 形式发布、路径不可达）时回退空表，_num/_int 再用
+# 调用方兜底参数，绝不让游戏逻辑因缺 schema 崩溃。
+# ---------------------------------------------------------------------------
+_SCHEMA_CACHE: dict[str, dict] | None = None
+
+
+def _schema_meta() -> dict[str, dict]:
+    """扁平化 _conf_schema.json -> {"work.slaveownerCooldown": {"default","min","max"}}。"""
+    global _SCHEMA_CACHE
+    if _SCHEMA_CACHE is not None:
+        return _SCHEMA_CACHE
+    out: dict[str, dict] = {}
+    try:
+        schema = json.loads(
+            (
+                Path(__file__).resolve().parent.parent / "_conf_schema.json"
+            ).read_text("utf-8")
+        )
+    except (OSError, ValueError):
+        schema = {}
+    for key, meta in schema.items():
+        if not isinstance(meta, dict):
+            continue
+        if meta.get("type") == "object":
+            for sk, smeta in (meta.get("items") or {}).items():
+                if isinstance(smeta, dict):
+                    out[f"{key}.{sk}"] = {
+                        "default": smeta.get("default"),
+                        "min": smeta.get("min"),
+                        "max": smeta.get("max"),
+                    }
+        else:
+            out[key] = {
+                "default": meta.get("default"),
+                "min": meta.get("min"),
+                "max": meta.get("max"),
+            }
+    _SCHEMA_CACHE = out
+    return out
 
 
 def _fmt(x: float) -> str:
@@ -81,14 +126,39 @@ class GameService:
 
     # ================= 基础工具 =================
 
+    def _meta(self, *path) -> dict:
+        """按点分路径取 schema 元数据；缺失时返回空 dict。"""
+        return _schema_meta().get(".".join(str(p) for p in path), {})
+
     def _cfg(self, *path, default=None):
         node = self.config
         for p in path:
             node = node.get(p, {}) if isinstance(node, dict) else {}
-        return node if node != {} else default
+        if node == {}:
+            # 未配置或值为空 dict：回退 schema 里的 default（唯一事实来源）
+            meta = self._meta(*path)
+            return default if default is not None else meta.get("default", {})
+        return node
 
-    def _num(self, *path, default: float, lo: float, hi: float) -> float:
-        """读浮点配置并夹到 [lo, hi]：配置写错（如概率填 5）不该变成必中/无限刷。"""
+    def _num(self, *path, default=None, lo=None, hi=None) -> float:
+        """读浮点配置并夹到 [lo, hi]：配置写错（如概率填 5）不该变成必中/无限刷。
+
+        default/lo/hi 均可省略——缺省时从 _conf_schema.json 取，schema 是唯一
+        事实来源；显式传入用于个别需要覆盖区间上限的调用（如排行榜）。
+        """
+        meta = self._meta(*path)
+        if default is None:
+            default = meta.get("default")
+        if lo is None:
+            lo = meta.get("min")
+        if hi is None:
+            hi = meta.get("max")
+        if default is None:
+            default = 0.0
+        if lo is None:
+            lo = -float("inf")
+        if hi is None:
+            hi = float("inf")
         try:
             v = float(self._cfg(*path, default=default))
         except (TypeError, ValueError):
@@ -97,7 +167,7 @@ class GameService:
             v = float(default)
         return min(hi, max(lo, v))
 
-    def _int(self, *path, default: int, lo: int, hi: int) -> int:
+    def _int(self, *path, default: int | None = None, lo: int | None = None, hi: int | None = None) -> int:
         return int(self._num(*path, default=default, lo=lo, hi=hi))
 
     @staticmethod
@@ -106,14 +176,15 @@ class GameService:
         return random.randint(min(lo, hi), max(lo, hi))
 
     def _no_cd(self, user_id: str) -> bool:
-        return str(user_id) in {str(u) for u in self.config.get("ignoreCDUsers", []) or []}
+        return str(user_id) in {
+            str(u) for u in self.config.get("ignoreCDUsers", []) or []
+        }
 
     def _cd_left(self, data: dict, key: str, cd: int, user_id: str, now: int) -> int:
         """统一冷却计算。返回剩余秒数（0 表示可以执行）。
 
         系统时钟回拨（容器时间同步、跨机迁移）会让存档里的时间戳大于当前时间，
-        旧写法 `cd - (now - last)` 会算出一个巨大的正数把玩家锁死，这里把
-        "未来的时间戳"直接当作 0 处理。
+        这里把"未来的时间戳"直接当作 0 处理，避免把玩家锁死。
         """
         if self._no_cd(user_id):
             return 0
@@ -125,11 +196,8 @@ class GameService:
         return left if left > 0 else 0
 
     async def get_player(self, group_id: str, user_id: str, nickname: str = "") -> dict:
-        """只读取存档。昵称更新走 set_card（只 UPDATE nickname 列）。
-
-        早期版本这里是 load + save 整行回写，两个 await 之间别人对这一行的
-        改动（被抢劫、收到转账、被购买）会被旧快照整行覆盖，等于凭空造币或丢钱。
-        """
+        """只读取存档。昵称更新走 set_card（只 UPDATE nickname 列），
+        避免整行回写覆盖并发改动。"""
         data = await self.db.load(group_id, user_id)
         if nickname and nickname != data.get("nickname", ""):
             await self.db.set_card(group_id, user_id, nickname)
@@ -171,9 +239,9 @@ class GameService:
         now = _now()
         # 拆成两个字面量分支：这样配置键与 schema 的 min/max 能被静态核对上
         cd = (
-            self._int("work", "slaveownerCooldown", default=60, lo=0, hi=604800)
+            self._int("work", "slaveownerCooldown")
             if is_admin
-            else self._int("work", "cooldown", default=3600, lo=0, hi=604800)
+            else self._int("work", "cooldown")
         )
         left = self._cd_left(data, "lastWorkingTime", cd, user_id, now)
         if left > 0:
@@ -184,15 +252,13 @@ class GameService:
         value = data["value"]
         if not data["slave"]:
             if is_admin:
-                lo = self._int("work", "slaveownerWageMin", default=100, lo=0, hi=10**9)
-                hi = self._int("work", "slaveownerWageMax", default=2000, lo=0, hi=10**9)
-                wages = self._rand(lo, hi) + self._rand(
-                    int(value / 10), int(value / 5)
-                )
+                lo = self._int("work", "slaveownerWageMin")
+                hi = self._int("work", "slaveownerWageMax")
+                wages = self._rand(lo, hi) + self._rand(int(value / 10), int(value / 5))
                 text = _sample(self.copy["slaveowner"])
             else:
-                lo = self._int("work", "wageMin", default=10, lo=0, hi=10**9)
-                hi = self._int("work", "wageMax", default=100, lo=0, hi=10**9)
+                lo = self._int("work", "wageMin")
+                hi = self._int("work", "wageMax")
                 wages = self._rand(lo, hi) + self._rand(
                     int(value / 20), int(value / 10)
                 )
@@ -215,17 +281,14 @@ class GameService:
                     "wages": _fmt(wages),
                     "balance": _fmt(data["currency"]),
                 },
-                text=(
-                    f"{head}{text}{wages}金币\n"
-                    f"当前共有{_fmt(data['currency'])}金币"
-                ),
+                text=(f"{head}{text}{wages}金币\n当前共有{_fmt(data['currency'])}金币"),
             )
 
         # 有奴隶：让奴隶打工
-        slave_lo = self._int("work", "slaveWageMin", default=5, lo=0, hi=10**9)
-        slave_hi = self._int("work", "slaveWageMax", default=20, lo=0, hi=10**9)
-        slack_rate = self._num("work", "slackRate", default=0.1, lo=0.0, hi=1.0)
-        slack_loss = self._num("work", "slackValueLoss", default=20.0, lo=0.0, hi=10**6)
+        slave_lo = self._int("work", "slaveWageMin")
+        slave_hi = self._int("work", "slaveWageMax")
+        slack_rate = self._num("work", "slackRate")
+        slack_loss = self._num("work", "slackValueLoss")
         lines, wages = [], 0
         for sid in [str(s) for s in data["slave"]]:
             slave = tx.get(sid)
@@ -256,7 +319,7 @@ class GameService:
         data["currency"] = round(data["currency"] + wages, 2)
         data["lastWorkingTime"] = now
         expense = ""
-        if random.random() < self._num("work", "expenseRate", default=0.2, lo=0.0, hi=1.0):
+        if random.random() < self._num("work", "expenseRate"):
             expense = _sample(self.copy["expenses"])
             m = re.search(r"\d+", expense)
             if m:
@@ -323,7 +386,7 @@ class GameService:
             )
 
         now = _now()
-        cd = self._int("purchase", "cooldown", default=3600, lo=0, hi=604800)
+        cd = self._int("purchase", "cooldown")
         left = self._cd_left(buyer, "lastPurchaseTime", cd, user_id, now)
         if left > 0:
             return notice(
@@ -336,13 +399,12 @@ class GameService:
         buyer["lastPurchaseTime"] = now
 
         # 身价上涨、改换门庭
-        gain = self._num("purchase", "valueGain", default=20.0, lo=0.0, hi=10**6)
+        gain = self._num("purchase", "valueGain")
         old_value = slave["value"]
         slave["value"] = round(slave["value"] + gain, 2)
         slave["master"] = str(user_id)
 
         # 一份钱只能进一个人的口袋：有原主人就付给原主人，无主则是"卖身钱"给本人。
-        # 旧版同时给奴隶和原主人各付一份 price，等于每笔交易凭空增发一份货币。
         lines = [f"花费 {_fmt(price)} 金币，剩余 {_fmt(buyer['currency'])} 金币"]
         if former_owner_id and former_owner_id != user_id:
             former = tx.get(former_owner_id)
@@ -391,16 +453,14 @@ class GameService:
             return notice("🚫", "你还没有主人，不需要赎身", [], tone="warn")
 
         now = _now()
-        cd = self._int("buyBack", "cooldown", default=86400, lo=0, hi=2592000)
-        max_times = self._int("buyBack", "maxTimes", default=3, lo=1, hi=1000)
-        tax_rate = self._num("buyBack", "taxRate", default=0.05, lo=0.0, hi=1.0)
-        price_multi = self._num("buyBack", "priceMulti", default=2.0, lo=0.1, hi=100.0)
-        value_multi = self._num(
-            "buyBack", "valueIncreaseMulti", default=1.2, lo=1.0, hi=10.0
-        )
+        cd = self._int("buyBack", "cooldown")
+        max_times = self._int("buyBack", "maxTimes")
+        tax_rate = self._num("buyBack", "taxRate")
+        price_multi = self._num("buyBack", "priceMulti")
+        value_multi = self._num("buyBack", "valueIncreaseMulti")
 
         price = round(data["value"] * price_multi, 2)
-        # 税按"赎身价"收，不是按剩余全部家当收（旧写法让富人多缴几万）
+        # 税按"赎身价"收，不是按剩余全部家当收
         tax = round(price * tax_rate, 2)
         total = round(price + tax, 2)
         if data["currency"] < total:
@@ -479,7 +539,7 @@ class GameService:
     ) -> dict:
         data = tx.get(user_id, nickname)
         now = _now()
-        cd = self._int("rob", "cooldown", default=600, lo=0, hi=604800)
+        cd = self._int("rob", "cooldown")
         left = self._cd_left(data, "lastRobTime", cd, user_id, now)
         if left > 0:
             return notice(
@@ -499,11 +559,11 @@ class GameService:
         victim = tx.get(target)
         victim_name = self._name(victim, target)
 
-        success_rate = self._num("rob", "successRate", default=0.3, lo=0.0, hi=1.0)
-        penalty_rate = self._num("rob", "penalty", default=0.1, lo=0.0, hi=1.0)
-        steal_rate = self._num("rob", "stealRate", default=0.2, lo=0.0, hi=1.0)
-        max_steal = self._int("rob", "maxSteal", default=100, lo=0, hi=10**9)
-        max_penalty = self._int("rob", "maxPenalty", default=50, lo=0, hi=10**9)
+        success_rate = self._num("rob", "successRate")
+        penalty_rate = self._num("rob", "penalty")
+        steal_rate = self._num("rob", "stealRate")
+        max_steal = self._int("rob", "maxSteal")
+        max_penalty = self._int("rob", "maxPenalty")
         if random.random() < success_rate:
             amount = round(min(victim["currency"] * steal_rate, max_steal), 2)
             data["currency"] = round(data["currency"] + amount, 2)
@@ -527,10 +587,10 @@ class GameService:
 
     def _train_one(self, tx, user_id: str, data: dict, sid: str, now: int) -> dict:
         """训练单个奴隶（事务内）。会扣减 data["currency"]。"""
-        cd = self._int("training", "cooldown", default=7200, lo=0, hi=604800)
-        cost_rate = self._num("training", "costRate", default=0.1, lo=0.01, hi=2.0)
-        inc_rate = self._num("training", "valueIncreaseRate", default=0.2, lo=0.0, hi=1.0)
-        success_rate = self._num("training", "successRate", default=0.7, lo=0.0, hi=1.0)
+        cd = self._int("training", "cooldown")
+        cost_rate = self._num("training", "costRate")
+        inc_rate = self._num("training", "valueIncreaseRate")
+        success_rate = self._num("training", "successRate")
 
         slave = tx.get(sid)
         name = self._name(slave, sid)
@@ -641,21 +701,21 @@ class GameService:
         sid1, sid2 = str(sid1), str(sid2)
         if sid1 == sid2:
             return notice("🚫", "不能让同一个奴隶自己决斗", [], tone="warn")
-        # 两个参战方都必须是自己的奴隶：旧版不校验 sid2，可以拉任意群友当陪练并扣他身价
+        # 两个参战方都必须是自己的奴隶
         if not self._owns(data, sid1):
             return notice("🚫", "参战奴隶 1 不是你的奴隶", [], tone="warn")
         if not self._owns(data, sid2):
             return notice("🚫", "参战奴隶 2 不是你的奴隶", [], tone="warn")
 
         now = _now()
-        cd = self._int("arena", "cooldown", default=7200, lo=0, hi=604800)
+        cd = self._int("arena", "cooldown")
         left = self._cd_left(data, "lastBattleTime", cd, user_id, now)
         if left > 0:
             return notice(
                 "⏳", "决斗冷却中", [f"剩余时间：{_cd_text(left)}"], tone="warn"
             )
 
-        fee = self._int("arena", "entryFee", default=50, lo=0, hi=10**9)
+        fee = self._int("arena", "entryFee")
         if data["currency"] < fee:
             return notice(
                 "💸",
@@ -679,26 +739,16 @@ class GameService:
         wn, ln = (n1, n2) if s1_wins else (n2, n1)
 
         # 奖励不能超过报名费，否则每打一次都净赚 = 无限刷币
-        reward_rate = self._num("arena", "rewardRate", default=0.2, lo=0.0, hi=1.0)
+        reward_rate = self._num("arena", "rewardRate")
         reward = int(fee * reward_rate)
-        win_inc = int(
-            winner["value"] * self._num("arena", "valueBonus", default=0.1, lo=0.0, hi=1.0)
-        )
-        lose_dec = int(
-            loser["value"] * self._num("arena", "loseValueRate", default=0.05, lo=0.0, hi=1.0)
-        )
+        win_inc = int(winner["value"] * self._num("arena", "valueBonus"))
+        lose_dec = int(loser["value"] * self._num("arena", "loseValueRate"))
         # 只保证"不因这次失败跌破下限"，不能无条件抬升：
         # 否则摸鱼掉到 60 的奴隶输一场反而涨回 100，可被用来洗身价
-        floor = min(
-            self._num("arena", "minValue", default=100.0, lo=0.0, hi=10**6),
-            loser["value"],
-        )
+        floor = min(self._num("arena", "minValue"), loser["value"])
         # 身价守恒：胜者涨幅取自败者跌幅与一个上限的较小值，
         # 否则 arena.cooldown=0 + 自己的两个奴隶互刷会让胜者身价单调上升无上限
-        cap = int(
-            self._num("arena", "maxWinBonus", default=0.2, lo=0.0, hi=1.0)
-            * winner["value"]
-        )
+        cap = int(self._num("arena", "maxWinBonus") * winner["value"])
         win_inc = min(win_inc, lose_dec, cap)
         winner["value"] = round(winner["value"] + win_inc, 2)
         loser["value"] = round(max(floor, loser["value"] - lose_dec), 2)
@@ -709,14 +759,9 @@ class GameService:
         else:
             data["battleStats"]["losses"] += 1
 
-        actions = [
-            f"{n1}使出浑身解数",
-            f"{n2}奋力反击",
-            f"{n1}展开猛攻",
-            f"{n2}寻找破绽",
-            f"{n1}气势如虹",
-            f"{n2}毫不示弱",
-        ]
+        actions = [str(a) for a in self.copy.get("arena_actions") or []]
+        if not actions:
+            actions = ["使出浑身解数", "奋力反击", "展开猛攻", "寻找破绽", "气势如虹", "毫不示弱"]
         process = [_sample(actions) for _ in range(self._rand(2, 3))]
         text = (
             f"⚔️ 决斗开始：{n1} VS {n2}\n" + "\n".join(process) + "\n"
@@ -750,46 +795,92 @@ class GameService:
 
     # ================= 排位赛 =================
 
-    _OPPONENTS: ClassVar[list[dict]] = [
-        {"name": "流浪剑客", "score": 800, "specialEffect": "剑术精湛，容易造成暴击"},
-        {"name": "江湖大侠", "score": 1200, "specialEffect": "内力深厚，防御力强"},
-        {"name": "武林高手", "score": 1600, "specialEffect": "轻功绝顶，闪避率高"},
-        {"name": "绝世高手", "score": 2000, "specialEffect": "武学通神，全面强化"},
-        {"name": "隐世门派弟子", "score": 1400, "specialEffect": "招式诡异，难以预测"},
-        {"name": "江湖杀手", "score": 1100, "specialEffect": "出手狠辣，伤害提升"},
-        {"name": "武馆教习", "score": 900, "specialEffect": "经验丰富，稳扎稳打"},
-        {"name": "散打高手", "score": 1300, "specialEffect": "近身搏斗见长"},
-    ]
-    _EVENTS: ClassVar[list[dict]] = [
-        {"name": "天气晴朗", "effect": 1.1, "desc": "状态绝佳"},
-        {"name": "狂风暴雨", "effect": 0.9, "desc": "行动受限"},
-        {"name": "月黑风高", "effect": 1.2, "desc": "战力提升"},
-        {"name": "人来人往", "effect": 0.95, "desc": "注意力分散"},
-        {"name": "良辰吉日", "effect": 1.15, "desc": "运势加成"},
-    ]
-    _TIERS: ClassVar[list[tuple[int, str]]] = [
-        (1000, "青铜"),
-        (1400, "白银"),
-        (1800, "黄金"),
-        (2200, "铂金"),
-    ]
+    # 对手/事件/段位文案来自 copy（resources/data/gameTexts.json，WebUI 可热更新），
+    # 不再硬编码在代码里。见 _opponents()/_events()/_tiers()。
 
-    @classmethod
-    def _tier(cls, score: int) -> str:
-        for threshold, name in cls._TIERS:
+    def _opponents(self) -> list[dict]:
+        lst = self.copy.get("ranking_opponents") or []
+        out = []
+        for o in lst:
+            if not isinstance(o, dict):
+                continue
+            try:
+                out.append(
+                    {
+                        "name": str(o.get("name") or "对手"),
+                        "score": int(o.get("score") or 0),
+                        "specialEffect": str(o.get("specialEffect") or ""),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        return out or [
+            {"name": "流浪剑客", "score": 800, "specialEffect": "剑术精湛，容易造成暴击"},
+            {"name": "江湖大侠", "score": 1200, "specialEffect": "内力深厚，防御力强"},
+            {"name": "武林高手", "score": 1600, "specialEffect": "轻功绝顶，闪避率高"},
+            {"name": "绝世高手", "score": 2000, "specialEffect": "武学通神，全面强化"},
+            {"name": "隐世门派弟子", "score": 1400, "specialEffect": "招式诡异，难以预测"},
+            {"name": "江湖杀手", "score": 1100, "specialEffect": "出手狠辣，伤害提升"},
+            {"name": "武馆教习", "score": 900, "specialEffect": "经验丰富，稳扎稳打"},
+            {"name": "散打高手", "score": 1300, "specialEffect": "近身搏斗见长"},
+        ]
+
+    def _events(self) -> list[dict]:
+        lst = self.copy.get("ranking_events") or []
+        out = []
+        for e in lst:
+            if not isinstance(e, dict):
+                continue
+            try:
+                out.append(
+                    {
+                        "name": str(e.get("name") or "事件"),
+                        "effect": float(e.get("effect") or 1.0),
+                        "desc": str(e.get("desc") or ""),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        return out or [
+            {"name": "天气晴朗", "effect": 1.1, "desc": "状态绝佳"},
+            {"name": "狂风暴雨", "effect": 0.9, "desc": "行动受限"},
+            {"name": "月黑风高", "effect": 1.2, "desc": "战力提升"},
+            {"name": "人来人往", "effect": 0.95, "desc": "注意力分散"},
+            {"name": "良辰吉日", "effect": 1.15, "desc": "运势加成"},
+        ]
+
+    def _tiers(self) -> list[tuple[int, str]]:
+        lst = self.copy.get("ranking_tiers") or []
+        out = []
+        for t in lst:
+            try:
+                out.append((int(t[0]), str(t[1])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        return out or [(1000, "青铜"), (1400, "白银"), (1800, "黄金"), (2200, "铂金")]
+
+    def _tier(self, score: int) -> str:
+        for threshold, name in self._tiers():
             if score < threshold:
                 return name
         return "钻石"
+
+    def _tier_desc(self) -> str:
+        """段位说明文本：与 gameTexts 里的 tiers 保持一致（WebUI 改档位后自动同步）。"""
+        tiers = self._tiers()
+        parts = [f"{name} <{threshold}" for threshold, name in tiers]
+        parts.append(f"钻石 ≥{tiers[-1][0]}" if tiers else "钻石")
+        return "｜".join(parts)
 
     @staticmethod
     def _expected(score: int, opponent_score: int) -> float:
         """Elo 期望胜率。"""
         return 1 / (1 + 10 ** ((opponent_score - score) / 400))
 
-    @classmethod
-    def _elo_diff(cls, score: int, opponent_score: int, win: bool, k: int = 32) -> int:
+    @staticmethod
+    def _elo_diff(score: int, opponent_score: int, win: bool, k: int = 32) -> int:
         """Elo 分数变化：赢 +K(1-E)，输 -K·E（E 为本方期望胜率）。"""
-        expected = cls._expected(score, opponent_score)
+        expected = GameService._expected(score, opponent_score)
         diff = math.floor(k * (1 - expected)) if win else -math.floor(k * expected)
         if diff == 0:
             diff = 1 if win else -1
@@ -808,7 +899,7 @@ class GameService:
             return notice("🚫", "你不是该奴隶的主人", [], tone="warn")
 
         now = _now()
-        cd = self._int("ranking", "cooldown", default=3600, lo=0, hi=604800)
+        cd = self._int("ranking", "cooldown")
         left = self._cd_left(data, "lastRankingTime", cd, user_id, now)
         if left > 0:
             return notice(
@@ -819,15 +910,14 @@ class GameService:
         slave_name = self._name(slave, target)
         score = slave["ranking"]["score"]
 
-        event = _sample(self._EVENTS)
-        valid = [
-            o for o in self._OPPONENTS if abs(o["score"] - score) <= 300
-        ] or self._OPPONENTS
+        event = _sample(self._events())
+        valid = [o for o in self._opponents() if abs(o["score"] - score) <= 300] or self._opponents()
         opponent = _sample(valid)
 
-        # 胜率以 Elo 期望胜率为基准再乘事件系数：旧写法固定 0.5×effect，
-        # 与对手强弱完全无关，导致分数无上界单调漂移、段位失去意义
-        win_rate = min(0.95, max(0.05, self._expected(score, opponent["score"]) * event["effect"]))
+        # 胜率以 Elo 期望胜率为基准再乘事件系数
+        win_rate = min(
+            0.95, max(0.05, self._expected(score, opponent["score"]) * event["effect"])
+        )
         win = random.random() < win_rate
         diff = self._elo_diff(score, opponent["score"], win)
 
@@ -835,7 +925,7 @@ class GameService:
         slave["ranking"]["matches"] += 1
         slave["ranking"]["tier"] = self._tier(slave["ranking"]["score"])
         # 只有赢了才有奖励，输了不发钱
-        reward_rate = self._num("ranking", "rewardRate", default=0.1, lo=0.0, hi=5.0)
+        reward_rate = self._num("ranking", "rewardRate")
         reward = int(abs(diff) * reward_rate) if win else 0
         data["currency"] = round(data["currency"] + reward, 2)
         data["lastRankingTime"] = now
@@ -858,6 +948,7 @@ class GameService:
                 "diff": diff,
                 "score": slave["ranking"]["score"],
                 "tier": slave["ranking"]["tier"],
+                "tier_desc": self._tier_desc(),
                 "matches": slave["ranking"]["matches"],
                 "reward": reward,
             },
@@ -867,9 +958,7 @@ class GameService:
     async def ranking_show(self, group_id: str, user_id: str, nickname: str) -> dict:
         data = await self.get_player(group_id, user_id, nickname)
         if not data["slave"]:
-            return notice(
-                "🚫", "你还没有奴隶，无法查看排位赛信息", [], tone="warn"
-            )
+            return notice("🚫", "你还没有奴隶，无法查看排位赛信息", [], tone="warn")
         # 一次性把全部奴隶的排行信息查回来：避免 N 次 self.db.load 的
         # SQLite 开/闭开销；用 list 转 dict 也减少下游查找的 O(n^2)。
         slave_ids = [str(s) for s in data["slave"]]
@@ -879,7 +968,7 @@ class GameService:
         for sid in slave_ids:
             slave = slaves_by_id.get(sid)
             if slave is None:
-                # 期间被删档：跳过；之前会 KeyError 整条指令崩
+                # 期间被删档：跳过
                 continue
             r = slave["ranking"]
             rows.append(
@@ -894,16 +983,14 @@ class GameService:
             f"{r['name']}：段位 {r['tier']}｜分数 {r['score']}｜场次 {r['matches']}"
             for r in rows
         )
-        text += (
-            "\n【段位说明】青铜 <1000｜白银 <1400｜黄金 <1800｜铂金 <2200｜钻石 ≥2200"
-        )
-        return R(tmpl="rank_match", data={"info_mode": True, "rows": rows}, text=text)
+        text += "\n【段位说明】" + self._tier_desc()
+        return R(tmpl="rank_match", data={"info_mode": True, "rows": rows, "tier_desc": self._tier_desc()}, text=text)
 
     # ================= 银行 =================
 
     def _rate_cfg(self) -> tuple[float, int]:
-        rate = self._num("bank", "interestRate", default=0.01, lo=0.0, hi=0.5)
-        max_hours = self._int("bank", "maxInterestTime", default=24, lo=0, hi=720)
+        rate = self._num("bank", "interestRate")
+        max_hours = self._int("bank", "maxInterestTime")
         return rate, max_hours
 
     def _pending_interest(self, data: dict, now: int) -> float:
@@ -957,7 +1044,7 @@ class GameService:
         if all_in:
             if data["currency"] <= 0:
                 return notice("🚫", "你一分都没有，让我存寂寞", [], tone="warn")
-            # 不再用 int() 截断：金币是浮点，整截会让 0.7 之类的尾数被静默吞掉
+            # 金币是浮点，用 round() 保留尾数，避免 int() 截断吞掉 0.7 之类的小数
             amount = round(data["currency"], 2)
         # round(99.999999, 2) = 100.00，但 data["currency"] = 99.999999
         # （浮点表示残留精度），导致 amount > currency 误判"余额不足"。
@@ -1022,8 +1109,8 @@ class GameService:
         data = tx.get(user_id, nickname)
         self._settle_interest(data, _now())
         # 价格倍率必须 >1，否则升级费用不增长，一键升级会同步空转到破产
-        price_multi = self._num("bank", "upgradePriceMulti", default=1.2, lo=1.01, hi=100.0)
-        limit_multi = self._num("bank", "limitIncreaseMulti", default=1.25, lo=1.0, hi=10.0)
+        price_multi = self._num("bank", "upgradePriceMulti")
+        limit_multi = self._num("bank", "limitIncreaseMulti")
 
         upgrades, total_spent = 0, 0.0
         while upgrades < MAX_AUTO_UPGRADES:
@@ -1135,8 +1222,8 @@ class GameService:
         if str(target) == str(user_id):
             return notice("🚫", "不能给自己转账", [], tone="warn")
         data = tx.get(user_id, nickname)
-        min_amount = self._int("transfer", "minAmount", default=100, lo=1, hi=10**12)
-        fee_rate = self._num("transfer", "feeRate", default=0.1, lo=0.0, hi=1.0)
+        min_amount = self._int("transfer", "minAmount")
+        fee_rate = self._num("transfer", "feeRate")
         if amount < min_amount:
             return notice("🚫", f"转账金额不能低于 {min_amount} 金币", [], tone="warn")
         if not tx.exists(target):
@@ -1171,7 +1258,8 @@ class GameService:
         # 与 ranking_show 同源改造：N+1 → 1 次 SELECT IN (..)
         slave_ids = [str(s) for s in data["slave"]]
         slaves_by_id = {
-            uid: p for uid, p in await self.db.query_players_by_uids(group_id, slave_ids)
+            uid: p
+            for uid, p in await self.db.query_players_by_uids(group_id, slave_ids)
         }
         slaves = []
         for sid in slave_ids:
@@ -1210,7 +1298,7 @@ class GameService:
         return R(tmpl="myslave", data=info, text=text)
 
     async def market_list(self, group_id: str) -> dict:
-        # 一条 SQL 按身价倒序取前 N，不再"列 id 再逐个 load"
+        # 一条 SQL 按身价倒序取前 N
         rows = await self.db.query_players(
             group_id, order_by="value", desc=True, limit=MARKET_LIMIT
         )
@@ -1219,12 +1307,15 @@ class GameService:
         # 主人昵称一次性批量补齐：避免主人在 top 100 之外时 market 列表里
         # 每条都 await self.name_of() 单次开/关 SQLite 连接，N+1 让指令慢 1~3s
         miss_ids = [
-            mid for _, p in rows
+            mid
+            for _, p in rows
             for mid in [p.get("master") or ""]
             if mid and mid not in names
         ]
         if miss_ids:
-            extra = await self.db.query_players_by_uids(group_id, list(dict.fromkeys(miss_ids)))
+            extra = await self.db.query_players_by_uids(
+                group_id, list(dict.fromkeys(miss_ids))
+            )
             for uid, p in extra:
                 names[uid] = self._name(p, uid)
         items = []
@@ -1354,7 +1445,7 @@ class GameService:
     # ================= WebUI 数据接口 =================
 
     async def stats(self) -> dict:
-        """全局统计（WebUI 总览用）：单条聚合 SQL，不再逐个玩家 load。"""
+        """全局统计（WebUI 总览用）：单条聚合 SQL 直接出结果。"""
         return await self.db.totals()
 
     async def group_counts(self) -> list[dict]:

@@ -46,7 +46,7 @@ h1{font-size:24px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
     <div class="box"><div class="v">{{ balance }}</div><div class="k">当前余额（金币）</div></div>
   </div>
   {% for l in lines or [] %}
-  <div class="line"><b>【{{ l.name }}】</b>{{ l.story }}<span class="inc"> +{{ l.income }} 金币</span></div>
+  <div class="line"><b>【{{ l.name }}】</b>{{ l.story }}{% if l.income and l.income != '0' %}<span class="inc"> +{{ l.income }} 金币</span>{% endif %}</div>
   {% endfor %}
   {% if expense %}<div class="expense">💸 意外事件：{{ expense }}</div>{% endif %}
   {% endif %}
