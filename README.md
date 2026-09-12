@@ -30,22 +30,37 @@ astrbot_plugin_slave_market/
 │   └── system_cmds.py    #   帮助/数据备份（管理员）
 ├── core/
 │   ├── context.py        #   GameCtx 共享上下文（服务/数据库/渲染器/平台昵称拉取）
-│   ├── db.py             #   SQLite 存储层（WAL + Connection.backup() 快照 + trash 回收站）
-│   ├── service.py        #   游戏逻辑（返回统一 R 结构：tmpl+data+text 回退）
+│   ├── auth.py           #   认证子系统（Argon2id 哈希 / JWT 会话 / 服务端会话表 / 密码存储）
+│   ├── service.py        #   游戏逻辑层 facade（重新导出 GameService）
+│   ├── svc/              #   游戏逻辑按域拆分（Mixin 组合成 GameService）
+│   │   ├── _const.py     #     数值常量 + 纯函数工具（_fmt/_cd_text/_now/_iso_week/schema 读取）
+│   │   ├── _base.py      #     配置读取 / 冷却 / 玩家访问 / 主奴关系工具
+│   │   ├── _work.py _purchase.py _rob.py _train.py _arena.py _rank.py
+│   │   └── _bank.py _board.py _backup.py _webapi.py
+│   ├── db/               #   SQLite 存储层（facade + Mixin）
+│   │   ├── _const.py     #     常量 / DDL / 默认值解析 / 行↔玩家数据转换
+│   │   ├── _core.py      #     连接、in-flight 计数、事务执行器（Abort/Txn）
+│   │   ├── _players.py   #     玩家级读写（load/exists/delete/trash 留档）
+│   │   ├── _group.py     #     群级聚合查询（query_*/search_players/totals）
+│   │   └── _backup.py    #     备份 / 恢复 / 裁剪 / 关闭
 │   ├── result.py         #   R 结果封装
-│   ├── texts.py          #   长文本加载器（resources/texts/*.json，可热更新）
+│   ├── texts.py          #   长文本/游戏文案加载器（内置 resources/ + 用户覆盖 overrides/）
 │   └── renderer.py       #   独立 Playwright 渲染器（懒启动/串行截图/自动清理）
 ├── webui/                # 独立端口管理面板（aiohttp + Argon2id + JWT 会话 + 全局错误中间件）
-│   ├── server.py         #   全量管理 API
+│   ├── server/           #   全量管理 API（facade + Mixin）
+│   │   ├── _const.py     #     常量、JSON 响应工具、环回判定、全局错误中间件、纯工具
+│   │   ├── _core.py      #     __init__ 与认证工具（JWT/cookie/密码存储装配）
+│   │   ├── _auth.py      #     鉴权中间件 _guard、Host/CSRF 校验、登录限速与认证端点
+│   │   ├── _serve.py     #     请求体解析、应用装配、start/stop、静态文件
+│   │   ├── _api.py       #     只读查询 API、玩家与备份管理 API
+│   │   └── _admin.py     #     插件配置读写 + 文案编辑
 │   └── index.html / style.css / app.js
 └── resources/
-    ├── data/workCopywriting.json   # 打工文案（WebUI 可在线编辑并热更新）
-    ├── data/gameTexts.json         # 决斗动作/排位赛对手/事件/段位文案（WebUI 可在线编辑并热更新）
-    ├── texts/help.json             # 帮助长文本（WebUI 可在线编辑并热更新）
+    ├── data/workCopywriting.json   # 打工文案（内置默认，WebUI 可在线编辑并热更新）
+    ├── data/gameTexts.json         # 决斗动作/排位赛对手/事件/段位文案（内置默认，WebUI 可在线编辑并热更新）
+    ├── texts/help.json             # 帮助长文本（内置默认，WebUI 可在线编辑并热更新）
     └── templates/*.html            # 消息图片 Jinja2 模板
 ```
-
-新增一条指令的步骤：在 `core/service.py` 写服务函数返回 `R`，在 `handlers/` 对应域文件写 `async run(ctx, event)` 并追加一条 `Route(pattern, name, doc, run)`。
 
 ---
 
@@ -108,29 +123,29 @@ apt-get update
 
 WebUI → 插件管理 → 本插件 → 重载。
 
-环境未就绪时，日志会输出一次完整指引，所有指令自动回退纯文本展示；安装完成后重载即可正常出图。
+环境未就绪时，首次渲染失败会输出一次完整指引（同一进程内只打一次），所有指令自动回退纯文本展示；安装完成后重载即可正常出图。
 
 ---
 
 ## 指令一览
 
-| 分类 | 指令 |
+前缀必须携带，`！`/`!` 均可。下表与 `handlers/` 里注册的路由一一对应（共 29 条）。
+
+| 分类 | 指令（含可用别名） |
 |---|---|
-| 帮助 | 奴隶帮助 / 奴隶菜单 / 群友帮助 / 群友菜单 |
-| 市场 | 购买奴隶 @群友（或 QQ 号）、奴隶市场、奴隶身价排行榜、奴隶资金排行榜 |
-| 个人 | 我的奴隶、打工（一键打工）、赎身、抢劫 @群友 |
-| 奴隶 | 放生奴隶 @奴隶、训练 @奴隶、一键训练 |
+| 帮助 | 奴隶帮助 / 奴隶菜单 / 群友帮助 / 群友菜单 / nl帮助 / nl菜单 |
+| 市场 | 购买奴隶 @群友（或 QQ 号）、奴隶市场 / 群友市场、奴隶身价排行榜 / 身价排行榜、奴隶资金排行榜 / 金币排行榜 / 资金排行榜 |
+| 个人 | 我的奴隶 / 我的群友、打工 / 一键打工 / 工作 / 一键工作、赎身、抢劫 @群友 / 打劫 @群友 |
+| 奴隶 | 放生奴隶 @奴隶 / 放生群友 @群友、训练 @奴隶、一键训练 |
 | 战斗 | 决斗 @奴隶1 @奴隶2、排位赛、参加排位赛 @奴隶 |
 | 银行 | 存款 金额、一键存款、取款 金额、银行信息、领取利息、升级信用、一键升级信用、转账 金额 @群友 |
-| 维护 | 奴隶备份、奴隶备份列表、奴隶恢复备份 序号、奴隶删除备份 序号（均为管理员） |
-
-前缀必须携带，`！`/`!` 均可。
+| 维护 | 奴隶备份 / 群友备份 / nl备份、奴隶备份列表、奴隶恢复备份 序号、奴隶删除备份 序号（均为管理员） |
 
 ---
 
 ## WebUI 管理面板
 
-默认 `http://127.0.0.1:17818`，可在插件配置中改端口/监听地址/密码（非本机监听必须设置密码，否则拒绝启动）。功能：
+默认 `http://127.0.0.1:17818`，可在插件配置中改端口/监听地址/密码。**非本机监听要求运维显式设置过密码**：首次启动会生成临时随机密码（明文写入 `admin_passwd.txt`，仅显示一次），此时若把 `webui_host` 改成 `0.0.0.0` 会被拒绝启动 —— 因为那个口令运维从没主动选过、还有明文落盘。先设 `webui_password`、或先在环回地址登录并在面板里改掉密码，之后即可改为非本机监听。功能：
 
 - **总览**：玩家/群/金币/银行/奴隶统计
 - **排行榜**：金币/身价/奴隶/银行四类，按群切换
@@ -139,6 +154,9 @@ WebUI → 插件管理 → 本插件 → 重载。
 - **备份**：创建/恢复/删除全量备份（`sqlite3.Connection.backup()` 一致性快照）
 - **文案**：在线编辑打工文案、决斗/排位赛文案（动作/对手/事件/段位）与帮助长文本并热更新（无需重载插件）；帮助文案为可视化编辑——标题、分栏卡片、条目增删与排序都是表单操作，不用手写 JSON，纯文本兜底可按分栏一键生成
 - **配置**：面板内直接修改插件配置（含嵌套配置组，密码留空保持原值）
+
+**会话有效期**：`webui_session_ttl` 是**绝对**有效期——登录后满这么久必然重登，不做空闲滑动续期
+（也不会因为操作而延长）；改密会立即吊销其它设备的会话，只保留当前这一个。
 
 ---
 

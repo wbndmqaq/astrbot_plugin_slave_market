@@ -22,6 +22,19 @@ SHOT_TIMEOUT = 45  # 秒：单次截图整体超时
 CLOSE_TIMEOUT = 5  # 秒：关闭 page/browser 的单步上限
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_-]+")
 
+# 渲染环境未就绪时的完整安装指引：整进程只打一次（见 _hint_once）。
+# 之前"每次渲染失败各打一条 warning"，把真正有用的指引淹没了。
+_ENV_HINT = (
+    "渲染环境未就绪，所有指令已回退为纯文本。安装（约 1~2 分钟）：\n"
+    "  1) pip install playwright\n"
+    "  2) python -m playwright install chromium\n"
+    "     （国内可加 PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/）\n"
+    "  3) 仅 Linux/Docker 容器报 libnss3 / libnspr4 缺失时：\n"
+    "     python -m playwright install-deps chromium\n"
+    "  4) 重载插件（WebUI → 插件管理 → 本插件 → 重载）"
+)
+_hint_logged = False
+
 
 class PlaywrightRenderer:
     def __init__(self, shot_dir: Path, scale: float = 2.0, logger=None):
@@ -33,7 +46,7 @@ class PlaywrightRenderer:
         self._browser = None
         self._ctx = None
         self._env = None
-        self._tmpl_cache: "OrderedDict[str, object]" = OrderedDict()
+        self._tmpl_cache: OrderedDict[str, object] = OrderedDict()
         # 模板编译可能被多个 to_thread worker 并发调用（不同用户的指令
         # 各自跑一个线程池 worker），用 threading.Lock 保护 _env/_tmpl_cache，
         # 避免 check-then-act 竞态导致 OrderedDict 内部状态被并发破坏。
@@ -62,6 +75,19 @@ class PlaywrightRenderer:
         return tmpl.render(**data)
 
     # ---------- 截图 ----------
+
+    def _hint_once(self) -> None:
+        """整进程只打一次完整安装指引（环境未就绪时）。
+
+        每次渲染失败都打一条普通 warning 会把真正有用的指引淹掉；
+        README 里承诺的"首次失败输出一次完整指引"由这里兑现。
+        """
+        global _hint_logged
+        if _hint_logged:
+            return
+        _hint_logged = True
+        if self.log:
+            self.log.error("[奴隶市场][Playwright] %s", _ENV_HINT)
 
     def _alive(self) -> bool:
         """浏览器与上下文都在，且连接未断。"""
@@ -123,17 +149,26 @@ class PlaywrightRenderer:
         return str(out)
 
     async def _launch(self):
-        from playwright.async_api import async_playwright
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as e:
+            # playwright 未安装：这是"环境未就绪"的确定信号，打一次完整指引
+            self._hint_once()
+            raise RuntimeError(f"playwright 未安装：{e}") from e
 
         # 与 chromium.launch 配套的 driver 对象：先停 pw，Chromium 子进程才会全收；
-        # 顺序不能反，否则 driver 死掉但子进程仍在。`pw_started` 标志位让外层
-        # 只清理"确实被 start 过的"实例，避免对一个未启动的 pw.stop() 抛异常。
-        pw_started = False
+        # 顺序不能反，否则 driver 死掉但子进程仍在。
+        #
+        # 「谁负责停 driver」的判据统一为 `self._pw is not None`：driver 句柄非空
+        # 就说明它确实被 start 过（`start()` 抛异常时赋值不会发生），因此绝不会对
+        # 一个未启动的对象调 stop()——原 `pw_started` 标志位的防护语义保留在这里。
+        # 但它同时带来了一个 bug：复用路径（self._pw 来自上一次调用，本次没 start）
+        # 下 launch 失败时不再回收 driver，半死 driver 被后续每次渲染复用，
+        # 出图**永久**退化为纯文本。因此失败分支一律走完整的 _teardown(stop_pw=True)。
         browser = None
         try:
             if self._pw is None:
                 self._pw = await async_playwright().start()
-                pw_started = True
             # 用 Playwright 自带的 timeout 而不是外层 wait_for：
             # 外层取消可能正好落在 launch 返回之后、句柄赋值之前，
             # 那个 Chromium 进程就再没人能关，成为孤儿
@@ -145,12 +180,8 @@ class PlaywrightRenderer:
                 # launch 自己抛了（超时/OOM/缺镜像）：连 browser 句柄都拿不到，
                 # 必须清掉 driver；否则 pw 活着，没人 stop，下次 _launch 复用
                 # 一个可能已坏的 driver，子进程累计泄漏
-                if pw_started and self._pw is not None:
-                    try:
-                        await asyncio.wait_for(self._pw.stop(), timeout=CLOSE_TIMEOUT)
-                    except Exception:
-                        pass
-                    self._pw = None
+                self._hint_once()
+                await self._teardown(stop_pw=True)
                 raise
             try:
                 ctx = await browser.new_context(
@@ -160,16 +191,10 @@ class PlaywrightRenderer:
             except Exception:
                 # 建 context 失败也要回收：先关浏览器（Playwright 会同步杀子进程），
                 # 再停 driver，状态归零；_browser 不暴露给 _alive()。
-                try:
+                with contextlib.suppress(Exception):
                     await asyncio.wait_for(browser.close(), timeout=CLOSE_TIMEOUT)
-                except Exception:
-                    pass
-                if pw_started and self._pw is not None:
-                    try:
-                        await asyncio.wait_for(self._pw.stop(), timeout=CLOSE_TIMEOUT)
-                    except Exception:
-                        pass
-                self._pw = None
+                browser = None
+                await self._teardown(stop_pw=True)
                 raise
             self._browser = browser
             self._ctx = ctx
@@ -181,10 +206,7 @@ class PlaywrightRenderer:
             if browser is not None:
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(browser.close(), timeout=CLOSE_TIMEOUT)
-            if pw_started and self._pw is not None:
-                with contextlib.suppress(Exception):
-                    await asyncio.wait_for(self._pw.stop(), timeout=CLOSE_TIMEOUT)
-                self._pw = None
+            await self._teardown(stop_pw=True)
             raise
 
     async def _teardown(self, stop_pw: bool = False):

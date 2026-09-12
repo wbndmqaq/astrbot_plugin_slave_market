@@ -6,7 +6,6 @@
 import re
 
 from ..core.result import notice
-
 from .base import MAX_ARG_LEN, Route, at_targets, gid_of, nickname_of, numbers, uid_of
 
 P = r"^[！!]"

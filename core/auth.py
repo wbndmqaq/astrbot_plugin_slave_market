@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover
 
 try:
     from argon2 import PasswordHasher
-    from argon2.exceptions import VerifyMismatchError, InvalidHashError
+    from argon2.exceptions import InvalidHashError, VerifyMismatchError
 except ImportError:  # pragma: no cover
     PasswordHasher = None  # type: ignore[assignment]
     VerifyMismatchError = Exception  # type: ignore[assignment, misc]
@@ -38,6 +38,11 @@ class AuthError(Exception):
 
 class AuthUnavailable(RuntimeError):
     """依赖缺失，无法初始化认证子系统。"""
+
+
+# 密码哈希文件加载失败后的重试间隔（秒）。见 PasswordStore 的读缓存语义：
+# 失败也要缓存哨兵，否则每请求路径上的 _must_reset() 都会同步读盘一次。
+_FAIL_RETRY_SECONDS = 30
 
 
 class Argon2Hasher:
@@ -81,7 +86,7 @@ class Argon2Hasher:
         """参数升级后，旧的哈希需要重新生成。调用 verify 成功后建议检查。"""
         try:
             return self._ph.check_needs_rehash(stored_hash)
-        except Exception:
+        except Exception:  # noqa: BLE001 - argon2 内部错误一律视为"无需重哈希"
             return False
 
 
@@ -139,7 +144,7 @@ class JWTIssuer:
             raise AuthError("会话已过期") from e
         except jwt.InvalidTokenError as e:
             raise AuthError(f"JWT 校验失败: {e}") from e
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             raise AuthError(f"JWT 异常: {e}") from e
         return payload
 
@@ -282,15 +287,6 @@ class SessionStore:
             finally:
                 conn.close()
 
-    def count(self) -> int:
-        with self._lock:
-            conn = self._connect()
-            try:
-                cur = conn.execute("SELECT COUNT(*) FROM sessions")
-                return int(cur.fetchone()[0])
-            finally:
-                conn.close()
-
 
 class PasswordStore:
     """管理 admin 密码哈希与"首次临时密码 → 必须改密"标记。
@@ -307,19 +303,40 @@ class PasswordStore:
 
     # 注意：临时明文密码本身**只在创建时写一次到 data_dir/admin_passwd.txt**，
     # 供管理员登录。文件在第一次成功登录后应被立即删除（或由清理任务回收）。
+
+    读缓存语义（重要）：
+      - `_cache` 为 dict：已成功加载，直接返回，零 IO。
+      - `_cache is None` 且 `_load_failed_at is None`：从未加载过 → 读盘。
+      - `_cache is None` 且 `_load_failed_at` 新鲜：**加载失败的哨兵**，
+        在 `_FAIL_RETRY_SECONDS` 内不再读盘。
+
+    第三点不是优化而是正确性要求：`_must_reset()` 位于每个已鉴权请求的路径上
+    （`_guard` 中间件），如果"文件缺失/损坏"每次都要同步读盘，事件循环会被
+    每请求一次 stat/read 拖住——而管理员清空密码文件正是合法操作。
     """
 
     def __init__(self, path: Path):
         self.path = Path(path)
         self._lock = threading.RLock()
         self._cache: dict | None = None
+        # 上次加载失败的时间戳（None = 没有失败记录 / 成功加载过）
+        self._load_failed_at: float | None = None
 
     def load(self) -> dict | None:
         with self._lock:
             try:
-                self._cache = json.loads(self.path.read_text("utf-8"))
+                data = json.loads(self.path.read_text("utf-8"))
             except (OSError, ValueError):
                 self._cache = None
+                self._load_failed_at = time.time()
+                return None
+            if not isinstance(data, dict):
+                # 合法 JSON 但不是对象（如被写成了数组）：同样按失败哨兵处理
+                self._cache = None
+                self._load_failed_at = time.time()
+                return None
+            self._cache = data
+            self._load_failed_at = None
             return self._cache
 
     def save(self, state: dict) -> None:
@@ -344,22 +361,28 @@ class PasswordStore:
             except Exception:
                 try:
                     tmp.unlink(missing_ok=True)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 - 清理失败不能再盖住原始异常
                     pass
                 raise
             self._cache = state
+            self._load_failed_at = None
 
     def get(self) -> dict | None:
-        if self._cache is None:
-            return self.load()
-        return self._cache
+        if self._cache is not None:
+            return self._cache
+        if self._load_failed_at is not None and (
+            time.time() - self._load_failed_at < _FAIL_RETRY_SECONDS
+        ):
+            return None  # 失败哨兵仍新鲜：本轮不再读盘
+        return self.load()
 
-    def ensure_has_password(self) -> dict:
-        """确保已存在一条密码记录。存在就返回，否则抛错（由调用方生成临时密码）。"""
-        st = self.get()
-        if st and st.get("hash"):
-            return st
-        raise AuthError("尚未初始化密码")
+    # 刻意不提供「丢弃缓存让下一次 get() 重新读盘」的方法（历史上有过
+    # invalidate()）：本类的所有写入方都走 save()，save() 会就地刷新 _cache，
+    # 因此进程内不存在"读到过期内容"的路径；进程内的多实例都由各自的
+    # 构造时机完成首读（main._bootstrap_admin_password 构造自己的实例、
+    # _start_webui 的门禁与 WebUIServer 各自读一次盘）。
+    # 留着它只会让"运维手工改文件后刷新"变成无人调用的死代码，
+    # 真需要那份能力时应配一个带鉴权的刷新入口，而不是一个私有方法。
 
 
 def rotate_password(
@@ -387,11 +410,11 @@ def rotate_password(
 
 
 __all__ = [
+    "Argon2Hasher",
     "AuthError",
     "AuthUnavailable",
-    "Argon2Hasher",
     "JWTIssuer",
-    "SessionStore",
     "PasswordStore",
+    "SessionStore",
     "rotate_password",
 ]

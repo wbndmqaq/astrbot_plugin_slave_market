@@ -19,3 +19,6 @@ Thumbs.db
 *.orig
 *.tmp
 *.log
+# 测试 / lint 缓存（pytest、ruff；姊妹插件同样忽略）
+.pytest_cache/
+.ruff_cache/

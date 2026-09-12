@@ -10,6 +10,7 @@ AstrBot 通过 handler.__module__ 与插件主模块做【精确匹配】来绑�
 """
 
 import asyncio
+import contextlib
 import re
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -49,21 +50,61 @@ class PlayerLockTable:
 
     def __init__(self, cap: int = _LOCK_CAP):
         self._cap = max(64, int(cap))
-        self._locks: "OrderedDict[tuple[str, str], asyncio.Lock]" = OrderedDict()
+        self._locks: OrderedDict[tuple[str, str], asyncio.Lock] = OrderedDict()
 
-    def acquire(self, gid, uid) -> asyncio.Lock:
+    def _lookup(self, gid, uid) -> asyncio.Lock:
         key = (str(gid or ""), str(uid))
         lock = self._locks.get(key)
         if lock is not None:
             self._locks.move_to_end(key)
             return lock
         if len(self._locks) >= self._cap:
-            for k in [k for k, v in self._locks.items() if not v.locked()][
-                : self._cap // 4
-            ]:
-                self._locks.pop(k, None)
-        lock = self._locks.setdefault(key, asyncio.Lock())
+            self._evict(keep=key)
+        return self._locks.setdefault(key, asyncio.Lock())
+
+    def _evict(self, keep=None) -> None:
+        """容量超限时淘汰一部分空闲锁。
+
+        只淘汰「未持有（not locked）**且没有等待者**」的条目。旧实现只看
+        `not v.locked()`，会摘掉一把仍被别的协程引用着的锁（它刚拿到引用、
+        还没 await 进入临界区），随后第三个协程对同一 (gid, uid) 会
+        `setdefault` 出一把**新锁** —— 同键两把锁、临界区并行执行，
+        「读余额→判断→写回」的双花窗口重新出现。
+
+        asyncio.Lock 没有公开的等待者计数，`_waiters` 是 CPython 实现细节，
+        因此用 getattr 探测，并且"探测不到就保留"（保守优先，宁可少淘汰）。
+        """
+        quota = max(1, self._cap // 4)
+        removed = 0
+        for k, lock in list(self._locks.items()):
+            if removed >= quota:
+                break
+            if k == keep or lock.locked():
+                continue
+            if getattr(lock, "_waiters", None):
+                continue
+            self._locks.pop(k, None)
+            removed += 1
+
+    async def acquire(self, gid, uid) -> asyncio.Lock:
+        """获取 (群, 用户) 锁，**在返回前完成 await 拿锁**。
+
+        这里 await 拿锁而不是"返回锁对象让调用方自己 async with"，是为了消除
+        「拿到锁对象 → 再 await 进入临界区」之间的窗口：本协程一旦持有该锁，
+        `locked()` 为 True，`_evict()` 绝不会再摘除它。
+        """
+        lock = self._lookup(gid, uid)
+        await lock.acquire()
         return lock
+
+    @contextlib.asynccontextmanager
+    async def hold(self, gid, uid):
+        """`async with locks.hold(gid, uid):` —— 退出时释放。"""
+        lock = await self.acquire(gid, uid)
+        try:
+            yield lock
+        finally:
+            lock.release()
 
     def clear(self) -> None:
         """热重载 / 卸载时清空锁表。不抢持锁中锁，让它们按协程退出自然释放。"""
@@ -78,7 +119,6 @@ class Route:
     run: Callable[..., Awaitable]
     admin: bool = False
     group_only: bool = True  # 群聊限定：由 install() 统一前置校验
-    priority: int = 0
 
 
 def install(cls, flt, module_path: str, routes) -> int:
@@ -109,10 +149,10 @@ def install(cls, flt, module_path: str, routes) -> int:
                 return
             # refresh_card 自身已带超时并吞掉所有异常，这里无需再包一层
             await self.ctx.refresh_card(event)
-            async with locks.acquire(gid, event.get_sender_id()):
+            async with locks.hold(gid, event.get_sender_id()):
                 try:
                     r = await _route.run(self.ctx, event)
-                except Exception:  # noqa: BLE001 - 内部错误兜底，不中断指令
+                except Exception:
                     # logger 兜底：旧内核的 Star 上可能没有 self.logger，
                     # 兜底逻辑本身再抛 AttributeError 会让指令静默失败
                     log = getattr(self, "logger", None) or _fallback_logger()
@@ -123,9 +163,6 @@ def install(cls, flt, module_path: str, routes) -> int:
             event.stop_event()
             if r.get("err"):
                 yield event.plain_result(str(r["err"])[:500])
-                return
-            if r.get("img"):  # 直接给图片路径（不经模板渲染）
-                yield event.image_result(str(r["img"]))
                 return
             img = await self.ctx.render(r.get("tmpl"), r.get("data") or {})
             if img:
@@ -141,7 +178,9 @@ def install(cls, flt, module_path: str, routes) -> int:
 
         if route.admin:
             handler = flt.permission_type(flt.PermissionType.ADMIN)(handler)
-        handler = flt.regex(route.pattern, priority=route.priority)(handler)
+        # 不做 priority 区分：全部路由都是同一个正则族（^[！!] 开头的独立指令），
+        # 不存在"同一条消息被多条路由竞争"的情形，Route.priority 从未被填过非 0 值。
+        handler = flt.regex(route.pattern)(handler)
         setattr(cls, route.name, handler)
         installed += 1
     return installed

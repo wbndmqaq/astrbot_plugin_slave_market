@@ -123,7 +123,9 @@ input[type=checkbox]:not(.sw){width:16px;height:16px;accent-color:var(--clay)}
 .tbl tr:hover td{background:rgba(198,123,92,.05)}
 .tbl .op{display:flex;gap:6px}
 .tbl .uid{font-size:11px;color:var(--faint)}
-.pager{display:flex;gap:8px;justify-content:center;padding-top:12px}
+.pager{display:flex;gap:8px;justify-content:center;padding-top:12px;flex-wrap:wrap}
+/* 分页只渲染当前页 ±3，省略处用 … 占位 */
+.pager .pager-gap{align-self:center;color:var(--faint);font-size:13px;padding:0 2px}
 
 /* ═══ 备份 ═══ */
 .bk-list{display:flex;flex-direction:column;gap:7px}

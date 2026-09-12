@@ -251,12 +251,35 @@ const playerRow = (p) => `
     <td><div class="op"><button class="btn sm" data-edit="${esc(p.uid)}">编辑</button></div></td>
   </tr>`;
 
+/* 分页按钮：只渲染当前页附近 ±3 页（万级玩家时旧的"每页一个按钮"
+   会一次插入上百个 button，切换面板明显卡顿） */
+function pagerHTML(pages) {
+  const cur = state.page;
+  const from = Math.max(1, cur - 3);
+  const to = Math.min(pages, cur + 3);
+  const btn = (p) => `<button class="btn sm${p === cur ? " primary" : ""}" data-page="${p}">${p}</button>`;
+  const out = [];
+  if (from > 1) {
+    out.push(btn(1));
+    if (from > 2) out.push('<span class="pager-gap">…</span>');
+  }
+  for (let p = from; p <= to; p++) out.push(btn(p));
+  if (to < pages) {
+    if (to < pages - 1) out.push('<span class="pager-gap">…</span>');
+    out.push(btn(pages));
+  }
+  return out.join("");
+}
+
 async function loadPlayers() {
   if (!state.gid) {
     $("#playerTbl tbody").innerHTML = `<tr><td colspan="8">${emptyHint(NO_GROUP_HINT)}</td></tr>`;
     $("#playerPager").innerHTML = "";
     return;
   }
+  // 有搜索词时保持搜索视图：编辑弹窗保存后会调 loadPlayers()，
+  // 旧实现直接走分页接口，于是搜索条件被静默丢弃、列表变回全量。
+  if (state.kw) return runSearch(state.kw);
   const my = ++seq.players;
   try {
     const r = await api(`/api/players?gid=${encodeURIComponent(state.gid)}&page=${state.page}&size=${state.size}`);
@@ -270,10 +293,7 @@ async function loadPlayers() {
     $("#playerTbl tbody").innerHTML = r.players.length
       ? r.players.map(playerRow).join("")
       : `<tr><td colspan="8"><p class="empty">该群暂无玩家数据</p></td></tr>`;
-    $("#playerPager").innerHTML = pages > 1
-      ? Array.from({ length: pages }, (_, i) =>
-          `<button class="btn sm ${i + 1 === state.page ? "primary" : ""}" data-page="${i + 1}">${i + 1}</button>`).join("")
-      : "";
+    $("#playerPager").innerHTML = pages > 1 ? pagerHTML(pages) : "";
   } catch (e) { toast(e.message, true); }
 }
 $("#playerPager").addEventListener("click", (e) => {
@@ -328,8 +348,9 @@ async function openEdit(uid) {
 $("#editCancel").onclick = () => closeModal("#editMask");
 
 /* ---------- 搜索 ---------- */
-$("#btnSearch").onclick = async () => {
-  const kw = $("#searchKw").value.trim();
+/* 搜索与 loadPlayers 共用：loadPlayers 在 state.kw 非空时也走这里，
+   保证"搜索 → 编辑 → 保存"之后列表仍是搜索结果而不是全量 */
+async function runSearch(kw) {
   state.kw = kw;
   if (!state.gid || !kw) { state.page = 1; return loadPlayers(); }
   const my = ++seq.players;
@@ -341,7 +362,9 @@ $("#btnSearch").onclick = async () => {
       : `<tr><td colspan="8"><p class="empty">未找到匹配玩家</p></td></tr>`;
     $("#playerPager").innerHTML = "";
   } catch (e) { toast(e.message, true); }
-};
+}
+
+$("#btnSearch").onclick = () => runSearch($("#searchKw").value.trim());
 $("#searchKw").addEventListener("keydown", (e) => e.key === "Enter" && $("#btnSearch").click());
 
 /* ---------- 备份 ---------- */
@@ -458,6 +481,10 @@ function renderHelpEditor(data) {
 }
 
 function collectHelpSections() {
+  // 刻意不过滤：空标题 / 空条目的分栏要能被 collectHelp() 发现并提示。
+  // 在这里 filter 掉的话：空条目的分栏会被后端 Texts.load_all 整栏丢弃
+  // （连同标题一起无声消失），空标题的分栏则会渲染成一张没有标题的空白卡片；
+  // 两种都该由用户自己修掉，而不是被静默处理。
   return $$("#heSecs .he-sec").map((el) => {
     const sec = {
       icon: $(".he-ico", el).value.trim(),
@@ -466,7 +493,7 @@ function collectHelpSections() {
     };
     if ($(".he-wide input", el).checked) sec.wide = true;
     return sec;
-  }).filter((s) => s.title && s.items.length);
+  });
 }
 
 const helpPlainText = (title, secs) =>
@@ -476,6 +503,21 @@ function collectHelp() {
   const title = $("#heTitle").value.trim();
   if (!title) { toast("标题不能为空", true); return null; }
   const sections = collectHelpSections();
+  // 空标题分栏**不会**被 core.texts.Texts.load_all 丢掉（它只按 items 过滤），
+  // 但会渲染成一张没有标题的空卡片，用户只看到一栏空白、不知道是什么。
+  // 后端 _validate_texts 现在也拒绝空标题，前后端口径一致：拦住并说清是哪一栏。
+  const noTitle = sections.findIndex((s) => !s.title);
+  if (noTitle >= 0) {
+    toast(`第 ${noTitle + 1} 个分栏没有标题，请补上标题或删除该分栏`, true);
+    return null;
+  }
+  // 空条目的分栏才是真正的"静默删数据"：load_all 会把 items 为空的分栏整栏
+  // 丢弃（连标题一起），静默保存等于用户填的标题无声消失。
+  const noItems = sections.findIndex((s) => !s.items.length);
+  if (noItems >= 0) {
+    toast(`第 ${noItems + 1} 个分栏没有任何条目，请添加条目或删除该分栏`, true);
+    return null;
+  }
   if (!sections.length) { toast("至少保留一个带条目的分栏", true); return null; }
   return {
     title,
@@ -577,7 +619,7 @@ function rowHTML(key, desc, hint, ctrl, keyLabel) {
     </div><div class="cfg-ctrl">${ctrl}</div></div>`;
 }
 
-function ctrlFor(key, meta, val, group) {
+function ctrlFor(key, meta, val, group, plainPwd) {
   const tp = meta.type || "string";
   const gAttr = group ? ` data-g="${esc(group)}"` : "";
   const kAttr = ` data-k="${esc(key)}"`;
@@ -598,7 +640,10 @@ function ctrlFor(key, meta, val, group) {
     return `<textarea class="cfg-in"${gAttr}${kAttr} data-tp="list" rows="2"
       placeholder="每行一个">${esc((val || []).join("\n"))}</textarea>`;
   }
-  const hidden = key === "webui_password";
+  // 密码框默认遮显；只有当后端回传「已开启明文回显」时才用 text ——
+  // 否则 schema 里的 webui_show_password_plain 在界面上毫无可见效果，
+  // 而它旁边的提示却说「输入框会带出明文」，两者自相矛盾。
+  const hidden = key === "webui_password" && !plainPwd;
   return `<input type="${hidden ? "password" : "text"}" class="cfg-in"${gAttr}${kAttr} data-tp="string" value="${esc(val == null ? "" : val)}">`;
 }
 
@@ -618,7 +663,10 @@ function bindStepper(btn) {
   if (!inp) return;
   let t = null, r = null;
   const stop = () => { clearTimeout(t); clearInterval(r); t = r = null;
-    document.removeEventListener("mouseup", stop); document.removeEventListener("mouseleave", stop); };
+    document.removeEventListener("mouseup", stop); document.removeEventListener("mouseleave", stop);
+    // window blur 也必须解绑：漏了这一句，每次 loadConfig() 重渲染都会
+    // 新增一个永久存活的 window 监听，闭包还钉住已脱离 DOM 的 input
+    window.removeEventListener("blur", stop); };
   const bump = () => {
     if (!inp.isConnected) return stop();   // 配置面板被重渲染后不再空转
     let v = parseFloat(inp.value); if (isNaN(v)) v = 0;
@@ -641,7 +689,7 @@ function bindStepper(btn) {
 
 async function loadConfig() {
   try {
-    const { schema, config, hidden_keys } = await api("/api/admin/config");
+    const { schema, config, hidden_keys, show_password_plain } = await api("/api/admin/config");
     ignoreCD = (Array.isArray(config.ignoreCDUsers) ? config.ignoreCDUsers : [])
       .map(String).filter(Boolean).map((uid) => ({ uid }));
     let html = "";
@@ -664,10 +712,15 @@ async function loadConfig() {
            </div>`, key);
         continue;
       }
-      const label = hidden_keys.includes(key)
+      let label = hidden_keys.includes(key)
         ? `${meta.hint || ""}（留空表示不修改）`.trim()
         : meta.hint;
-      html += rowHTML(key, meta.description || key, label, ctrlFor(key, meta, val));
+      if (key === "webui_password" && show_password_plain) {
+        // 回显开关与这个输入框的显示直接相关：不提示的话，用户会以为
+        // "输入框里带出密码"是浏览器记的密码
+        label = `${label}（当前已开启明文回显：输入框会带出磁盘上的明文，保存即覆盖哈希）`;
+      }
+      html += rowHTML(key, meta.description || key, label, ctrlFor(key, meta, val, null, show_password_plain));
     }
     $("#cfgForm").innerHTML = html;
     $$("#cfgForm .st-btn").forEach(bindStepper);
@@ -699,12 +752,14 @@ async function loadPlayerOptions() {
   try {
     // 一次请求拿全部群的全部玩家。旧写法按 /api/players 分页接口取，
     // 每群只能拿到前 20 人，第 21 个人永远选不到。
-    const { players } = await api("/api/players_all");
+    const { players, truncated } = await api("/api/players_all");
     if (!players.length) {
       sel.innerHTML = `<option value="">暂无玩家数据</option>`;
       sel.disabled = true;
       return;
     }
+    // 服务端对全量接口有硬上限：命中上限时明确告知，别让人以为玩家丢了
+    if (truncated) toast(`玩家过多，选择器仅加载前 ${players.length} 人；其余请直接填写 ID`, true);
     // 给已在名单里的 uid 补上昵称，否则刷新后只剩一串数字认不出是谁
     const names = new Map(players.map((p) => [String(p.uid), `${p.nickname}（${p.uid}）`]));
     let changed = false;
@@ -784,7 +839,13 @@ function closeModal(sel) {
 }
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  const top = $(".modal-mask.show:last-of-type") || $(".modal-mask.show");
+  /* 按"栈顶"关闭：确认框（#askMask）是独立第二层，会压在编辑弹窗上面。
+     旧写法 `$(".modal-mask.show:last-of-type")` 永不匹配 —— #askMask 之后
+     还有 #toastBox 等同级节点，它不是父元素的最后一个同类型子元素；
+     回退分支 `$(".modal-mask.show")` 取到文档里第一个 = 编辑弹窗，
+     于是确认框在上面时按 Esc 会关掉下层编辑弹窗。 */
+  const open = $$(".modal-mask.show");
+  const top = open[open.length - 1];
   if (top) closeModal("#" + top.id);
 });
 

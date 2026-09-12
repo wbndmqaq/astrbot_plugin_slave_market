@@ -40,7 +40,7 @@
   },
   "webui_session_ttl": {
     "description": "登录会话有效期（秒）",
-    "hint": "空闲超时也会强制重登。建议 1~24 小时",
+    "hint": "绝对有效期：登录后满这么久必然重登（不做空闲滑动续期，也不因操作而延长）。建议 1~24 小时",
     "type": "int",
     "default": 43200,
     "min": 300,
@@ -86,7 +86,7 @@
         "max": 1000
       },
       "taxRate": {
-        "description": "赎身后剩余资产税率（0~1）",
+        "description": "赎身税税率（按赎身价计税，0~1）",
         "type": "float",
         "default": 0.05,
         "min": 0.0,

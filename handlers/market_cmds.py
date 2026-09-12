@@ -4,7 +4,6 @@
 """
 
 from ..core.result import notice
-
 from .base import Route, gid_of, nickname_of, target_of, uid_of
 
 P = r"^[！!]"

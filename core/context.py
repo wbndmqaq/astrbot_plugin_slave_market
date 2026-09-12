@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time as _time
 from collections import OrderedDict
 from pathlib import Path
@@ -29,6 +30,30 @@ _CARD_NEG_TTL = 300  # 未命中负缓存（秒）
 _CARD_FETCH_TIMEOUT = 5  # 昵称拉取整体超时（秒）：平台无响应时不挂住指令
 
 
+def _cfg_int(config, key: str, default: int, lo: int, hi: int) -> int:
+    """读整型配置并夹到 [lo, hi]；脏值（""/None/"abc"/inf）回落 default。
+
+    GameCtx 是在 SlaveMarket.__init__ 里构造的，这里抛异常等于整个插件
+    （含全部游戏指令）加载失败。配置文件是用户可手改的，必须容错。
+    """
+    try:
+        v = int(config.get(key, default))
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(lo, min(hi, v))
+
+
+def _cfg_float(config, key: str, default: float, lo: float, hi: float) -> float:
+    """读浮点配置并夹到 [lo, hi]；脏值/NaN/inf 回落 default。"""
+    try:
+        v = float(config.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(v):
+        return default
+    return max(lo, min(hi, v))
+
+
 class GameCtx:
     def __init__(
         self, plugin, config: dict, data_root: Path, copywriting: dict, logger
@@ -42,31 +67,44 @@ class GameCtx:
         # SQLite 存档库；schema 初始化在 initialize() 中 await ctx.db.init() 完成
         self.db = PlayerDB(
             self.data_root / "slave_market.db",
-            backup_keep=int(config.get("backupKeep", 10)),
+            backup_keep=_cfg_int(config, "backupKeep", 10, 0, 1000),
             bank_init=config.get("bank") or {},
         )
         self.service = GameService(self.db, config, copywriting)
+        self._sync_copy_to_storage()
         self.renderer = PlaywrightRenderer(
             self.data_root / "screenshots",
-            scale=float(config.get("render_scale", 2.0) or 2.0),
+            scale=_cfg_float(config, "render_scale", 2.0, 1.0, 4.0),
             logger=logger,
         )
-        self.texts = Texts(
-            Path(__file__).resolve().parent.parent / "resources" / "texts"
-        )
-        self._card_cache: "OrderedDict[tuple[str, str], tuple[float, str]]" = (
+        # 长文本：内置 resources/texts（只读）+ data_root/overrides/texts（WebUI 可写）
+        self.texts = Texts(self.data_root)
+        self._card_cache: OrderedDict[tuple[str, str], tuple[float, str]] = (
             OrderedDict()
         )
         self._tmpl_text: dict[str, str] = {}  # 模板文件内容缓存（避免每次出图读盘）
 
+    def _sync_copy_to_storage(self) -> None:
+        """把文案里影响「建号默认值」的部分同步给存储层。
+
+        目前只有 gameTexts 的段位表首档（新号的初始分数/段位）。文案是唯一
+        事实来源：用户在 WebUI 把段位表改成 500 起步后，建号必须是 500/首档名，
+        否则库里写死的 1000/「青铜」会漏到界面，打一场就跳到别的档位。
+        """
+        self.db.set_rank_init((self.copy or {}).get("ranking_tiers"))
+
     def set_copywriting(self, copy: dict) -> None:
-        """设置/热更新游戏文案（同步更新 ctx 与 service 的引用）。"""
+        """设置/热更新游戏文案（同步更新 ctx 与 service 的引用 + 建号默认值）。"""
         self.copy = copy
         self.service.copy = copy
+        self._sync_copy_to_storage()
 
-    def reload_texts(self) -> None:
-        """热更新长文本（帮助等），由 WebUI 保存后调用。"""
-        self.texts.load_all(force=True)
+    def reload_texts(self, force: bool = True) -> None:
+        """热更新长文本（帮助等），由 WebUI 保存后调用。
+
+        保存路径在 data_root/overrides/ 下，因此这里重新合并「内置 + 用户覆盖」。
+        """
+        self.texts.load_all(force=force)
 
     # ---------- 平台昵称拉取 ----------
 
@@ -78,16 +116,9 @@ class GameCtx:
                 qq = str(getattr(comp, "qq", ""))
                 if qq and qq != "all" and qq != str(event.get_self_id()):
                     uids.append(qq)
-        for uid in extra_uids or ():
-            if uid:
-                uids.append(str(uid))
-        seen: set[str] = set()
-        out = []
-        for u in uids:
-            if u and u not in seen:
-                seen.add(u)
-                out.append(u)
-        return out
+        uids.extend(str(u) for u in extra_uids or () if u)
+        # 去重且保序：dict.fromkeys 就是"按首次出现顺序去重"
+        return list(dict.fromkeys(uids))
 
     def _cache_set(self, key, expire_ts, val, now=None) -> None:
         now = _time.time() if now is None else now
@@ -108,9 +139,9 @@ class GameCtx:
             await asyncio.wait_for(
                 self._refresh_card(event, extra_uids), timeout=_CARD_FETCH_TIMEOUT
             )
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             self.log.debug("[奴隶市场] 昵称拉取超时，已跳过")
-        except Exception:  # noqa: BLE001 - 昵称只是显示优化，绝不影响指令
+        except Exception:  # noqa: BLE001, S110 - 昵称只是显示优化，绝不影响指令
             pass
 
     async def _refresh_card(self, event, extra_uids=()) -> None:
@@ -197,7 +228,7 @@ class GameCtx:
                             or user.get("nickname")
                             or ""
                         ).strip()
-            except Exception:  # noqa: BLE001 - 灰度接口未开放时静默
+            except Exception:  # noqa: BLE001, S110 - 灰度接口未开放时静默
                 pass
             return uid, card
 
