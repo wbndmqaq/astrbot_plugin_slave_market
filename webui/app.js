@@ -435,6 +435,14 @@ function renderListEditor(data) {
         <button class="btn sm" data-add>＋ 添加一条</button>
       </div>`;
     }
+    if (typeof v === "string") {
+      // 单字符串键（uiTexts 的交互回复/模板文案）：单行输入框
+      return `
+      <div class="txt-key" data-key="${esc(k)}" data-kind="str">
+        <label>${esc(k)}</label>
+        <div class="txt-list"><div class="txt-item"><input value="${esc(v)}"></div></div>
+      </div>`;
+    }
     return `
       <div class="txt-key" data-key="${esc(k)}" data-kind="json">
         <label>${esc(k)}</label>
@@ -481,15 +489,14 @@ function renderHelpEditor(data) {
 }
 
 function collectHelpSections() {
-  // 刻意不过滤：空标题 / 空条目的分栏要能被 collectHelp() 发现并提示。
-  // 在这里 filter 掉的话：空条目的分栏会被后端 Texts.load_all 整栏丢弃
-  // （连同标题一起无声消失），空标题的分栏则会渲染成一张没有标题的空白卡片；
-  // 两种都该由用户自己修掉，而不是被静默处理。
+  // 刻意不过滤：空标题 / 空条目要能被 collectHelp() 发现并提示。
+  // 在这里 filter(Boolean) 的话：混在有效条目里的空行会被静默删掉再保存
+  // （用户填的内容无声消失），只有"整栏全空"的分栏能被 noItems 检查拦住。
   return $$("#heSecs .he-sec").map((el) => {
     const sec = {
       icon: $(".he-ico", el).value.trim(),
       title: $(".he-title", el).value.trim(),
-      items: $$(".he-items input", el).map((i) => i.value.trim()).filter(Boolean),
+      items: $$(".he-items input", el).map((i) => i.value.trim()),
     };
     if ($(".he-wide input", el).checked) sec.wide = true;
     return sec;
@@ -516,6 +523,13 @@ function collectHelp() {
   const noItems = sections.findIndex((s) => !s.items.length);
   if (noItems >= 0) {
     toast(`第 ${noItems + 1} 个分栏没有任何条目，请添加条目或删除该分栏`, true);
+    return null;
+  }
+  // 混在有效条目里的空行同样拦下（后端 _validate_texts 也会拒绝，这里给
+  // 更明确的提示）：filter 掉再提交 = 静默删内容。
+  const emptyItem = sections.findIndex((s) => s.items.some((x) => !x));
+  if (emptyItem >= 0) {
+    toast(`第 ${emptyItem + 1} 个分栏有空条目，请填写内容或删除该行`, true);
     return null;
   }
   if (!sections.length) { toast("至少保留一个带条目的分栏", true); return null; }
@@ -593,6 +607,15 @@ $("#btnSaveTexts").onclick = async () => {
           toast(`键 ${name2} 的 JSON 格式错误`, true);
           return;
         }
+      } else if (key.dataset.kind === "str") {
+        // 单字符串键（uiTexts）：留空直接拦下，避免把一条文案清空成
+        // 「永远显示代码内置默认值」却毫无提示
+        const v = $(".txt-list input", key).value.trim();
+        if (!v) {
+          toast(`键 ${name2} 不能为空`, true);
+          return;
+        }
+        data[name2] = v;
       } else {
         const shown = $$(".txt-list input", key).map((i) => i.value.trim()).filter(Boolean);
         // 折叠时把没渲染出来的尾部原样接回去
@@ -997,15 +1020,24 @@ function enhanceSelect(sel) {
   wrap._place = place;
 
   // 选项被业务代码重建 / 禁用状态变化时，重画弹层与标签
-  new MutationObserver(() => syncSelect(wrap))
-    .observe(sel, { childList: true, attributes: true, attributeFilter: ["disabled"] });
+  const mo = new MutationObserver(() => syncSelect(wrap));
+  mo.observe(sel, { childList: true, attributes: true, attributeFilter: ["disabled"] });
+  wrap._mo = mo;
   sel.addEventListener("change", () => syncSelect(wrap));
   syncSelect(wrap);
 }
 
 const enhanceAllSelects = () => $$("select").forEach(enhanceSelect);
 let _selTimer = null;
-new MutationObserver(() => {
+new MutationObserver((muts) => {
+  // 清理被移除的 sel-wrap 的 MutationObserver，防止内存泄漏
+  for (const mut of muts) {
+    for (const node of mut.removedNodes) {
+      if (node.nodeType !== 1) continue;
+      node.querySelectorAll?.(".sel-wrap").forEach(w => w._mo?.disconnect());
+      if (node.classList?.contains("sel-wrap")) node._mo?.disconnect();
+    }
+  }
   if (_selTimer) clearTimeout(_selTimer);
   _selTimer = setTimeout(enhanceAllSelects, 0);
 }).observe(document.body, { childList: true, subtree: true });

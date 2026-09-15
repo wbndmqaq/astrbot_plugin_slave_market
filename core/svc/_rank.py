@@ -28,7 +28,7 @@ class _RankMixin:
             try:
                 out.append(
                     {
-                        "name": str(o.get("name") or "对手"),
+                        "name": str(o.get("name") or self.t("ui_rank_fallback_opponent", "对手")),
                         "score": int(o.get("score") or 0),
                         "specialEffect": str(o.get("specialEffect") or ""),
                     }
@@ -46,7 +46,7 @@ class _RankMixin:
             try:
                 out.append(
                     {
-                        "name": str(e.get("name") or "事件"),
+                        "name": str(e.get("name") or self.t("ui_rank_fallback_event", "事件")),
                         "effect": float(e.get("effect") or 1.0),
                         "desc": str(e.get("desc") or ""),
                     }
@@ -110,14 +110,19 @@ class _RankMixin:
     def _ranking_join(self, tx, user_id: str, nickname: str, target: str) -> dict:
         data = tx.get(user_id, nickname)
         if not self._owns(data, target):
-            return notice("🚫", "你不是该奴隶的主人", [], tone="warn")
+            return notice(
+                "🚫", self.t("ui_not_owner", "你不是该奴隶的主人"), [], tone="warn"
+            )
 
         now = _now()
         cd = self._int("ranking", "cooldown")
         left = self._cd_left(data, "lastRankingTime", cd, user_id, now)
         if left > 0:
             return notice(
-                "⏳", "排位赛冷却中", [f"剩余时间：{_cd_text(left)}"], tone="warn"
+                "⏳",
+                self.t("ui_rank_cd", "排位赛冷却中"),
+                [self.t("ui_cd_left", "剩余时间：{left}", left=_cd_text(left))],
+                tone="warn",
             )
 
         slave = tx.get(target)
@@ -131,8 +136,11 @@ class _RankMixin:
         if not events or not opponents or not tiers:
             return notice(
                 "🚫",
-                "排位赛文案未配置（gameTexts 的 events / opponents / tiers 为空），"
-                "请在 WebUI 文案中补充",
+                self.t(
+                    "ui_rank_no_copy",
+                    "排位赛文案未配置（gameTexts 的 events / opponents / tiers 为空），"
+                    "请在 WebUI 文案中补充",
+                ),
                 [],
                 tone="err",
             )
@@ -157,13 +165,38 @@ class _RankMixin:
         data["currency"] = round(data["currency"] + reward, 2)
         data["lastRankingTime"] = now
 
+        sign = "+" if diff > 0 else ""
         text = (
-            f"🏆 排位赛：当前事件「{event['name']}」（{event['desc']}）\n"
-            f"{slave_name} VS {opponent['name']}（对手特性：{opponent['specialEffect']}）\n"
-            f"{'胜利！' if win else '失败！'}\n"
-            f"分数变化：{'+' if diff > 0 else ''}{diff}，当前 {slave['ranking']['score']} 分\n"
-            f"当前段位：{slave['ranking']['tier']}\n"
-            f"获得奖励：{reward} 金币"
+            self.t(
+                "ui_rank_event",
+                "🏆 排位赛：当前事件「{event}」（{desc}）",
+                event=event["name"],
+                desc=event["desc"],
+            )
+            + "\n"
+            + self.t(
+                "ui_rank_vs",
+                "{name} VS {opponent}（对手特性：{effect}）",
+                name=slave_name,
+                opponent=opponent["name"],
+                effect=opponent["specialEffect"],
+            )
+            + "\n"
+            + (self.t("ui_rank_win", "胜利！") if win else self.t("ui_rank_lose", "失败！"))
+            + "\n"
+            + self.t(
+                "ui_rank_diff",
+                "分数变化：{sign}{diff}，当前 {score} 分",
+                sign=sign,
+                diff=diff,
+                score=slave["ranking"]["score"],
+            )
+            + "\n"
+            + self.t(
+                "ui_rank_tier", "当前段位：{tier}", tier=slave["ranking"]["tier"]
+            )
+            + "\n"
+            + self.t("ui_rank_reward", "获得奖励：{reward} 金币", reward=reward)
         )
         return R(
             tmpl="rank_match",
@@ -185,7 +218,12 @@ class _RankMixin:
     async def ranking_show(self, group_id: str, user_id: str, nickname: str) -> dict:
         data = await self.get_player(group_id, user_id, nickname)
         if not data["slave"]:
-            return notice("🚫", "你还没有奴隶，无法查看排位赛信息", [], tone="warn")
+            return notice(
+                "🚫",
+                self.t("ui_rank_noslave", "你还没有奴隶，无法查看排位赛信息"),
+                [],
+                tone="warn",
+            )
         # 一次性把全部奴隶的排行信息查回来：避免 N 次 self.db.load 的
         # SQLite 开/闭开销；用 list 转 dict 也减少下游查找的 O(n^2)。
         slave_ids = [str(s) for s in data["slave"]]
@@ -206,13 +244,20 @@ class _RankMixin:
                     "matches": r["matches"],
                 }
             )
-        text = "【奴隶排位赛信息】\n" + "\n".join(
-            f"{r['name']}：段位 {r['tier']}｜分数 {r['score']}｜场次 {r['matches']}"
+        text = self.t("ui_rank_info_head", "【奴隶排位赛信息】") + "\n" + "\n".join(
+            self.t(
+                "ui_rank_info_row",
+                "{name}：段位 {tier}｜分数 {score}｜场次 {matches}",
+                name=r["name"],
+                tier=r["tier"],
+                score=r["score"],
+                matches=r["matches"],
+            )
             for r in rows
         )
         td = self._tier_desc()
         if td:
-            text += "\n【段位说明】" + td
+            text += "\n" + self.t("ui_rank_tier_desc_head", "【段位说明】") + td
         return R(
             tmpl="rank_match",
             data={"info_mode": True, "rows": rows, "tier_desc": td},

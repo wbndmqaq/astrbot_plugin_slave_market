@@ -21,7 +21,10 @@ async def deposit(ctx, event):
     amount = _first_int(event)
     if amount is None:
         return notice(
-            "🚫", "用法：存款 金额（全部存入请用「一键存款」）", [], tone="warn"
+            "🚫",
+            ctx.t("ui_usage_deposit", "用法：存款 金额（全部存入请用「一键存款」）"),
+            [],
+            tone="warn",
         )
     return await ctx.service.bank_deposit(
         gid_of(event), uid_of(event), nickname_of(event), amount
@@ -39,7 +42,9 @@ async def withdraw(ctx, event):
     """从银行取款：取款 金额。"""
     amount = _first_int(event)
     if amount is None:
-        return notice("🚫", "用法：取款 金额", [], tone="warn")
+        return notice(
+            "🚫", ctx.t("ui_usage_withdraw", "用法：取款 金额"), [], tone="warn"
+        )
     return await ctx.service.bank_withdraw(
         gid_of(event), uid_of(event), nickname_of(event), amount
     )
@@ -75,10 +80,17 @@ async def transfer(ctx, event):
     """转账给群友：转账 金额 @群友。"""
     ats = at_targets(event)
     if not ats:
-        return notice("🚫", "请 @ 指定要转账的用户", [], tone="warn")
+        return notice(
+            "🚫", ctx.t("ui_usage_transfer_at", "请 @ 指定要转账的用户"), [], tone="warn"
+        )
     m = re.search(rf"转账\s*(\d{{1,{MAX_ARG_LEN}}})", event.message_str or "")
     if not m:
-        return notice("🚫", "请输入转账金额，如：转账 500 @群友", [], tone="warn")
+        return notice(
+            "🚫",
+            ctx.t("ui_usage_transfer_amount", "请输入转账金额，如：转账 500 @群友"),
+            [],
+            tone="warn",
+        )
     return await ctx.service.bank_transfer(
         gid_of(event), uid_of(event), nickname_of(event), ats[0], int(m.group(1))
     )

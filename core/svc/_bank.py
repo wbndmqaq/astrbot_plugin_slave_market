@@ -61,12 +61,22 @@ class _BankMixin:
         # 参数校验先做：与 _bank_withdraw 一致，且无效指令不应推进计息起点
         all_in = amount is None
         if not all_in and (not isinstance(amount, (int, float)) or amount <= 0):
-            return notice("🚫", "请输入正确的存款金额", [], tone="warn")
+            return notice(
+                "🚫",
+                self.t("ui_deposit_bad_amount", "请输入正确的存款金额"),
+                [],
+                tone="warn",
+            )
         data = tx.get(user_id, nickname)
         paid = self._settle_interest(data, _now())  # 校验通过后再结息
         if all_in:
             if data["currency"] <= 0:
-                return notice("🚫", "你一分都没有，让我存寂寞", [], tone="warn")
+                return notice(
+                    "🚫",
+                    self.t("ui_deposit_nothing", "你一分都没有，让我存寂寞"),
+                    [],
+                    tone="warn",
+                )
             # 金币是浮点，用 round() 保留尾数，避免 int() 截断吞掉 0.7 之类的小数
             amount = round(data["currency"], 2)
         # round(99.999999, 2) = 100.00，但 data["currency"] = 99.999999
@@ -75,27 +85,55 @@ class _BankMixin:
         if amount > data["currency"]:
             amount = math.floor(data["currency"] * 100) / 100
         if amount > data["currency"]:
-            return notice("💸", "余额不足", [], tone="err")
+            return notice(
+                "💸", self.t("ui_gold_short", "金币不足"), [], tone="err"
+            )
         space = round(data["bank"]["limit"] - data["bank"]["balance"], 2)
         if amount > space:
             return notice(
                 "🏦",
-                "存款失败！超出存储上限",
+                self.t("ui_deposit_over_limit", "存款失败！超出存储上限"),
                 [
-                    f"当前存储上限 {data['bank']['limit']} 金币，已存 {_fmt(data['bank']['balance'])}",
-                    f"可存入 {_fmt(max(0.0, space))} 金币（可升级信用等级提升上限）",
+                    self.t(
+                        "ui_deposit_limit_now",
+                        "当前存储上限 {limit} 金币，已存 {balance}",
+                        limit=data["bank"]["limit"],
+                        balance=_fmt(data["bank"]["balance"]),
+                    ),
+                    self.t(
+                        "ui_deposit_limit_left",
+                        "可存入 {space} 金币（可升级信用等级提升上限）",
+                        space=_fmt(max(0.0, space)),
+                    ),
                 ],
                 tone="warn",
             )
         data["currency"] = round(data["currency"] - amount, 2)
         data["bank"]["balance"] = round(data["bank"]["balance"] + amount, 2)
         lines = [
-            f"存入 {_fmt(amount)} 金币",
-            f"当前存款 {_fmt(data['bank']['balance'])}｜当前余额 {_fmt(data['currency'])}",
+            self.t("ui_deposit_amount", "存入 {amount} 金币", amount=_fmt(amount)),
+            self.t(
+                "ui_bank_balance_line",
+                "当前存款 {balance}｜当前余额 {currency}",
+                balance=_fmt(data["bank"]["balance"]),
+                currency=_fmt(data["currency"]),
+            ),
         ]
         if paid > 0:
-            lines.append(f"（顺带结算了 {_fmt(paid)} 金币利息）")
-        return notice("🏦", f"{'全部存入' if all_in else '存款'}成功！", lines)
+            lines.append(
+                self.t("ui_interest_settled", "（顺带结算了 {amount} 金币利息）", amount=_fmt(paid))
+            )
+        return notice(
+            "🏦",
+            self.t(
+                "ui_deposit_ok",
+                "{kind}成功！",
+                kind=self.t("ui_deposit_all", "全部存入")
+                if all_in
+                else self.t("ui_deposit", "存款"),
+            ),
+            lines,
+        )
 
     async def bank_withdraw(
         self, group_id: str, user_id: str, nickname: str, amount: int
@@ -106,20 +144,43 @@ class _BankMixin:
 
     def _bank_withdraw(self, tx, user_id: str, nickname: str, amount: int) -> dict:
         if amount <= 0:  # 参数校验放在结息之前，避免无效指令也推进计息起点
-            return notice("🚫", "请输入正确的取款金额", [], tone="warn")
+            return notice(
+                "🚫",
+                self.t("ui_withdraw_bad_amount", "请输入正确的取款金额"),
+                [],
+                tone="warn",
+            )
         data = tx.get(user_id, nickname)
         paid = self._settle_interest(data, _now())
         if amount > data["bank"]["balance"]:
-            return notice("💸", "存款余额不足", [], tone="err")
+            return notice(
+                "💸", self.t("ui_withdraw_short", "存款余额不足"), [], tone="err"
+            )
         data["currency"] = round(data["currency"] + amount, 2)
         data["bank"]["balance"] = round(data["bank"]["balance"] - amount, 2)
         lines = [
-            f"当前存款 {_fmt(data['bank']['balance'])}",
-            f"当前余额 {_fmt(data['currency'])}",
+            self.t(
+                "ui_bank_deposit_now",
+                "当前存款 {balance}",
+                balance=_fmt(data["bank"]["balance"]),
+            ),
+            self.t(
+                "ui_bank_currency_now",
+                "当前余额 {currency}",
+                currency=_fmt(data["currency"]),
+            ),
         ]
         if paid > 0:
-            lines.append(f"（顺带结算了 {_fmt(paid)} 金币利息）")
-        return notice("🏦", f"取款成功！取出 {_fmt(amount)} 金币", lines)
+            lines.append(
+                self.t("ui_interest_settled", "（顺带结算了 {amount} 金币利息）", amount=_fmt(paid))
+            )
+        return notice(
+            "🏦",
+            self.t(
+                "ui_withdraw_ok", "取款成功！取出 {amount} 金币", amount=_fmt(amount)
+            ),
+            lines,
+        )
 
     async def bank_upgrade(
         self, group_id: str, user_id: str, nickname: str, auto: bool
@@ -158,19 +219,45 @@ class _BankMixin:
         if upgrades == 0:
             return notice(
                 "💸",
-                "升级失败！",
+                self.t("ui_upgrade_fail", "升级失败！"),
                 [
-                    f"当前升级需要 {data['bank']['upgradePrice']} 金币",
-                    f"你的余额 {_fmt(data['currency'])} 金币",
+                    self.t(
+                        "ui_upgrade_price_now",
+                        "当前升级需要 {price} 金币",
+                        price=data["bank"]["upgradePrice"],
+                    ),
+                    self.t(
+                        "ui_you_have",
+                        "你只有 {have} 金币",
+                        have=_fmt(data["currency"]),
+                    ),
                 ],
                 tone="err",
             )
         return notice(
             "📈",
-            f"{'一键升级' if auto else '升级'}成功！共升级 {upgrades} 次，花费 {_fmt(total_spent)} 金币",
+            self.t(
+                "ui_upgrade_ok",
+                "{kind}成功！共升级 {times} 次，花费 {spent} 金币",
+                kind=self.t("ui_upgrade_auto", "一键升级")
+                if auto
+                else self.t("ui_upgrade", "升级"),
+                times=upgrades,
+                spent=_fmt(total_spent),
+            ),
             [
-                f"当前信用等级 Lv.{data['bank']['level']}｜存储上限 {data['bank']['limit']} 金币",
-                f"下次升级费用 {data['bank']['upgradePrice']} 金币｜当前余额 {_fmt(data['currency'])}",
+                self.t(
+                    "ui_upgrade_level_now",
+                    "当前信用等级 Lv.{level}｜存储上限 {limit} 金币",
+                    level=data["bank"]["level"],
+                    limit=data["bank"]["limit"],
+                ),
+                self.t(
+                    "ui_upgrade_next",
+                    "下次升级费用 {price} 金币｜当前余额 {currency}",
+                    price=data["bank"]["upgradePrice"],
+                    currency=_fmt(data["currency"]),
+                ),
             ],
         )
 
@@ -188,14 +275,44 @@ class _BankMixin:
         rate, max_hours = self._rate_cfg()
         interest = self._pending_interest(data, now)
         text = (
-            "===== 银行信息 =====\n"
-            f"信用等级：Lv.{bank['level']}\n"
-            f"当前存款：{_fmt(bank['balance'])} 金币\n"
-            f"存储上限：{bank['limit']} 金币\n"
-            f"升级费用：{bank['upgradePrice']} 金币\n"
-            f"当前余额：{_fmt(data['currency'])} 金币\n"
-            f"可领利息：{_fmt(interest)} 金币\n"
-            f"利率说明：每小时 {rate * 100:.0f}%，最多计算 {max_hours} 小时"
+            self.t("ui_bank_info_head", "===== 银行信息 =====")
+            + "\n"
+            + self.t("ui_bank_info_level", "信用等级：Lv.{level}", level=bank["level"])
+            + "\n"
+            + self.t(
+                "ui_bank_info_balance",
+                "当前存款：{balance} 金币",
+                balance=_fmt(bank["balance"]),
+            )
+            + "\n"
+            + self.t(
+                "ui_bank_info_limit", "存储上限：{limit} 金币", limit=bank["limit"]
+            )
+            + "\n"
+            + self.t(
+                "ui_bank_info_price",
+                "升级费用：{price} 金币",
+                price=bank["upgradePrice"],
+            )
+            + "\n"
+            + self.t(
+                "ui_bank_info_currency",
+                "当前余额：{currency} 金币",
+                currency=_fmt(data["currency"]),
+            )
+            + "\n"
+            + self.t(
+                "ui_bank_info_interest",
+                "可领利息：{interest} 金币",
+                interest=_fmt(interest),
+            )
+            + "\n"
+            + self.t(
+                "ui_bank_info_rate",
+                "利率说明：每小时 {rate}%，最多计算 {hours} 小时",
+                rate=f"{rate * 100:.0f}",
+                hours=max_hours,
+            )
         )
         return R(
             tmpl="bank",
@@ -221,13 +338,33 @@ class _BankMixin:
         data = tx.get(user_id, nickname)
         interest = self._settle_interest(data, _now())
         if interest <= 0:
-            return notice("⏳", "当前没有可领取的利息，每小时结算一次", [], tone="warn")
+            return notice(
+                "⏳",
+                self.t(
+                    "ui_interest_none",
+                    "当前没有可领取的利息，每小时结算一次",
+                ),
+                [],
+                tone="warn",
+            )
         return notice(
             "💰",
-            f"成功领取利息 {_fmt(interest)} 金币",
+            self.t(
+                "ui_interest_ok",
+                "成功领取利息 {amount} 金币",
+                amount=_fmt(interest),
+            ),
             [
-                f"当前存款 {_fmt(data['bank']['balance'])}",
-                f"当前余额 {_fmt(data['currency'])}",
+                self.t(
+                    "ui_bank_deposit_now",
+                    "当前存款 {balance}",
+                    balance=_fmt(data["bank"]["balance"]),
+                ),
+                self.t(
+                    "ui_bank_currency_now",
+                    "当前余额 {currency}",
+                    currency=_fmt(data["currency"]),
+                ),
             ],
         )
 
@@ -243,21 +380,42 @@ class _BankMixin:
         self, tx, user_id: str, nickname: str, target: str, amount: int
     ) -> dict:
         if str(target) == str(user_id):
-            return notice("🚫", "不能给自己转账", [], tone="warn")
+            return notice(
+                "🚫", self.t("ui_transfer_self", "不能给自己转账"), [], tone="warn"
+            )
         data = tx.get(user_id, nickname)
         min_amount = self._int("transfer", "minAmount")
         fee_rate = self._num("transfer", "feeRate")
         if amount < min_amount:
-            return notice("🚫", f"转账金额不能低于 {min_amount} 金币", [], tone="warn")
+            return notice(
+                "🚫",
+                self.t(
+                    "ui_transfer_min", "转账金额不能低于 {min} 金币", min=min_amount
+                ),
+                [],
+                tone="warn",
+            )
         if not tx.exists(target):
-            return notice("🚫", "对方还没有参与游戏，无法转账", [], tone="warn")
+            return notice(
+                "🚫",
+                self.t("ui_transfer_target_missing", "对方还没有参与游戏，无法转账"),
+                [],
+                tone="warn",
+            )
         fee = math.ceil(amount * fee_rate)
         total = amount + fee
         if data["currency"] < total:
             return notice(
                 "💸",
-                "余额不足",
-                [f"需要 {_fmt(total)} 金币（含手续费 {fee}）"],
+                self.t("ui_gold_short", "金币不足"),
+                [
+                    self.t(
+                        "ui_transfer_need",
+                        "需要 {total} 金币（含手续费 {fee}）",
+                        total=_fmt(total),
+                        fee=fee,
+                    )
+                ],
                 tone="err",
             )
 
@@ -267,8 +425,20 @@ class _BankMixin:
         recv["currency"] = round(recv["currency"] + amount, 2)
         return notice(
             "🤝",
-            f"成功转账 {_fmt(amount)} 金币给 {self._name(recv, target)}",
-            [f"手续费 {fee} 金币｜剩余余额 {_fmt(data['currency'])}"],
+            self.t(
+                "ui_transfer_ok",
+                "成功转账 {amount} 金币给 {name}",
+                amount=_fmt(amount),
+                name=self._name(recv, target),
+            ),
+            [
+                self.t(
+                    "ui_transfer_fee",
+                    "手续费 {fee} 金币｜剩余余额 {currency}",
+                    fee=fee,
+                    currency=_fmt(data["currency"]),
+                )
+            ],
         )
 
     # ================= 查询 / 排行榜 =================

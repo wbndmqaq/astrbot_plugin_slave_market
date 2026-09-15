@@ -31,10 +31,10 @@ tr:nth-child(3) td:first-child{color:#b08050}
 <body>
   <div class="hdr">
     <div class="icon">🏆</div>
-    <h1>{{ title or "排行榜" }}</h1>
+    <h1>{{ title or t.board_default_title }}</h1>
   </div>
   {% if not rows %}
-  <div class="empty">暂无数据</div>
+  <div class="empty">{{ t.empty }}</div>
   {% else %}
   <table>
     <tbody>
@@ -48,6 +48,6 @@ tr:nth-child(3) td:first-child{color:#b08050}
     </tbody>
   </table>
   {% endif %}
-  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+  <div class="foot">— {{ t.brand }} · {{ plugin_version or "" }} —</div>
 </body>
 </html>

@@ -34,7 +34,7 @@
   },
   "webui_password": {
     "description": "WebUI 管理员密码（首次启动会自动生成临时密码，见日志）",
-    "hint": "已采用 Argon2id 哈希落盘 + 服务端会话；配置面板上的明文回显是临时可见，落盘永远是哈希",
+    "hint": "明文只用于首次建哈希，插件会自动把它替换为 Argon2id 哈希串（$argon2... 开头）落盘；面板改密同样只回写哈希。明文永不落盘",
     "type": "string",
     "default": ""
   },
@@ -55,8 +55,8 @@
     "max": 10
   },
   "webui_show_password_plain": {
-    "description": "配置面板暂存明文（仅会话内可见）",
-    "hint": "关闭后即使管理员本人在面板上也无法看到原密码；保存即覆盖哈希",
+    "description": "配置面板回显配置里的密码值",
+    "hint": "仅当配置里的 webui_password 仍是明文时有效（面板改密后配置里存的是哈希，本开关不会回显哈希）",
     "type": "bool",
     "default": false
   },

@@ -28,12 +28,12 @@ h1{font-size:25px;letter-spacing:5px;color:#8c3b2e;margin-top:6px}
 <body class="tone-{{ tone or 'ok' }}">
   <div class="hdr">
     <div class="icon">{{ icon or "📜" }}</div>
-    <h1>{{ title or "奴隶市场" }}</h1>
+    <h1>{{ title or t.brand }}</h1>
   </div>
   <div class="rule">❖</div>
   <div class="lines">
     {% for l in lines or [] %}<div class="line">{{ l }}</div>{% endfor %}
   </div>
-  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+  <div class="foot">— {{ t.brand }} · {{ plugin_version or "" }} —</div>
 </body>
 </html>

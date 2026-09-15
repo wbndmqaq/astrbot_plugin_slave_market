@@ -49,7 +49,11 @@ def _read_schema() -> dict:
 
 # 段位初始分/名称的最终字面量兜底：内置正本 gameTexts.json 的 ranking_tiers
 # 首档读不到（.pyc 发布 / resources 被裁剪 / 首档结构非法）时用它。
-_RANK_FALLBACK: tuple[int, str] = (1000, "青铜")
+# 分数取「首档门槛 − 1」：svc._tier() 把门槛当【离开该档的上界】
+# （score < threshold → 该档名，段位说明文案也是「青铜 <1000」），
+# 初始分必须落在首档区间内，否则新号会「分数 1000 却挂着青铜」、
+# 打第一场就被静默改成白银。
+_RANK_FALLBACK: tuple[int, str] = (999, "青铜")
 # 段位名会拼进 _SCHEMA 的 DDL 默认值（SQL 字面量）：超过该长度直接回落兜底
 _RANK_NAME_MAX = 16
 
@@ -90,7 +94,9 @@ def _builtin_rank_default() -> tuple[int, str]:
                 and not any(ch in name for ch in ("'", '"', "\x00"))
                 and all(ch >= " " and ch != "\x7f" for ch in name)
             ):
-                return score, name
+                # 门槛是「离开该档」的上界（见 _RANK_FALLBACK 注释）：
+                # 初始分取 threshold-1，保证新号确实落在首档区间里
+                return max(0, score - 1), name
     return _RANK_FALLBACK
 
 
@@ -99,6 +105,11 @@ def _rank_init_from_tiers(tiers) -> tuple[int, str] | None:
 
     运行期热更新路径（用户覆盖 gameTexts.json）经此推导「建号默认值」，
     取不到就保持 NEW_PLAYER 模板里的静态默认，绝不写入非法值。
+
+    门槛语义与 svc._tier() 同源：门槛是【离开该档的上界】（score < threshold
+    才算该档）。所以初始分取 threshold-1——用户把段位表改成 500 起步后，
+    新号必须是 499/首档名，而不是 500（500 在 _tier() 里已经是下一档了，
+    否则新号一建档就与段位说明自相矛盾，打一场后被静默改档）。
     """
     first = tiers[0] if isinstance(tiers, (list, tuple)) and tiers else None
     if not (isinstance(first, (list, tuple)) and len(first) == 2):
@@ -110,7 +121,7 @@ def _rank_init_from_tiers(tiers) -> tuple[int, str] | None:
         return None
     if not isinstance(name, str) or not name.strip():
         return None
-    return max(0, score), name
+    return max(0, score - 1), name
 
 
 def _resolve_defaults() -> tuple[dict[str, int], int, str, float]:
@@ -118,9 +129,10 @@ def _resolve_defaults() -> tuple[dict[str, int], int, str, float]:
 
     权威来源：_conf_schema.json 的 bank.initialLevel / initialLimit /
     initialUpgradePrice。段位初始分与名称取自 resources/data/gameTexts.json
-    的 ranking_tiers 首档（默认 [1000, "青铜"]），身价初值对应 arena.minValue
-    的量纲基准 100。schema / gameTexts 拿不到（.pyc 发布 / resources 被裁剪）
-    时回落到字面量兜底——它们与 schema / gameTexts 的默认值一致。
+    的 ranking_tiers 首档门槛-1（默认门槛 1000 → 新号 999 分 /「青铜」，
+    保证初始分落在首档区间，见 _RANK_FALLBACK 注释），身价初值对应
+    arena.minValue 的量纲基准 100。schema / gameTexts 拿不到（.pyc 发布 /
+    resources 被裁剪）时回落到字面量兜底——它们与上述推导结果一致。
     """
     bank = {"level": 1, "limit": 1000, "upgradePrice": 100}
     schema = _read_schema()

@@ -13,6 +13,10 @@ from ._const import (
 )
 
 
+class _NotFound(Exception):
+    """目标档案在事务内已不存在（存在性校验必须放进事务，见 _admin_save）。"""
+
+
 class _ApiMixin:
     # ===== 公开 =====
 
@@ -123,13 +127,16 @@ class _ApiMixin:
         uid = str(body.get("uid", ""))
         if not gid or not uid:
             return _json({"error": "缺参数"}, 400)
-        if not await self.ctx.service.db.exists(gid, uid):
-            return _json({"error": "未找到"}, 404)
 
         db = self.ctx.service.db
         rejected: list[str] = []
 
         def _apply(tx):
+            # 存在性校验必须放进事务内：exists()→transact 两步之间目标可能被
+            # 删档，事务外校验通过后 tx.get(uid) 仍会按新号模板建档，把刚被
+            # 删除的档案用面板表单值复活成幽灵行。
+            if not tx.exists(uid):
+                raise _NotFound
             data = tx.get(uid)
             for key, (path, caster, lo) in {
                 "currency": (("currency",), float, 0.0),
@@ -161,14 +168,17 @@ class _ApiMixin:
                     elif new_master and not tx.exists(new_master):
                         rejected.append("master（该玩家不存在）")
                     else:
-                        if old_master:
+                        if old_master and tx.exists(old_master):
                             self.ctx.service._drop_slave(tx.get(old_master), uid)
                         if new_master:
                             self.ctx.service._add_slave(tx.get(new_master), uid)
                         data["master"] = new_master
             return data
 
-        data = await db.transact(gid, _apply)
+        try:
+            data = await db.transact(gid, _apply)
+        except _NotFound:
+            return _json({"error": "未找到"}, 404)
         return _json(
             {
                 "ok": True,

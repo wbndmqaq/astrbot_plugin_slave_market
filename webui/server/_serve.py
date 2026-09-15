@@ -7,7 +7,7 @@ import json
 
 from aiohttp import web
 
-from ...core.auth import rotate_password
+from ...core.auth import is_argon2_hash, rotate_password, set_password_hash
 from ._const import MAX_BODY_BYTES, _error_middleware, _json
 
 
@@ -68,17 +68,28 @@ class _ServeMixin:
         # 旧版明文密码迁移（Argon2id 哈希是 CPU 密集型，不能在 __init__ 里同步做）
         if getattr(self, "_pending_legacy_migration", False):
             try:
-                await asyncio.to_thread(
-                    rotate_password,
-                    self._pwd_store,
-                    self._hasher,
-                    self.legacy_password,
-                    must_reset=False,
-                )
+                if is_argon2_hash(self.legacy_password):
+                    # 配置里已经是哈希形态（面板改密写回的）：直接装入存储，
+                    # 全程不经手明文，也不需要 Argon2id 计算
+                    await asyncio.to_thread(
+                        set_password_hash,
+                        self._pwd_store,
+                        self.legacy_password,
+                        must_reset=False,
+                    )
+                    self.log.info("[奴隶市场] 配置中的密码哈希已装入密码存储")
+                else:
+                    await asyncio.to_thread(
+                        rotate_password,
+                        self._pwd_store,
+                        self._hasher,
+                        self.legacy_password,
+                        must_reset=False,
+                    )
+                    self.log.info(
+                        "[奴隶市场] WebUI 旧版明文密码已迁移为 Argon2id 哈希（首次登录后建议改密）"
+                    )
                 self.auth_on = True
-                self.log.info(
-                    "[奴隶市场] WebUI 旧版明文密码已迁移为 Argon2id 哈希（首次登录后建议改密）"
-                )
             except Exception as e:  # noqa: BLE001
                 self.log.error("[奴隶市场] 旧版密码迁移失败：%s", e)
             self._pending_legacy_migration = False

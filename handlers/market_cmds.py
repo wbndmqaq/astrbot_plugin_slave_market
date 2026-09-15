@@ -13,7 +13,12 @@ async def purchase(ctx, event):
     """购买 @ 的群友为奴隶（价格为对方身价）。"""
     target = target_of(event)
     if not target:
-        return notice("🚫", "请 @ 要购买的群友，或输入对方 ID", [], tone="warn")
+        return notice(
+            "🚫",
+            ctx.t("ui_usage_buy_target", "请 @ 要购买的群友，或输入对方 ID"),
+            [],
+            tone="warn",
+        )
     return await ctx.service.purchase(
         gid_of(event), uid_of(event), nickname_of(event), target
     )
@@ -23,7 +28,12 @@ async def release(ctx, event):
     """放生自己的奴隶。"""
     target = target_of(event)
     if not target:
-        return notice("🚫", "请 @ 要放生的奴隶，或输入对方 ID", [], tone="warn")
+        return notice(
+            "🚫",
+            ctx.t("ui_usage_release_target", "请 @ 要放生的奴隶，或输入对方 ID"),
+            [],
+            tone="warn",
+        )
     return await ctx.service.release(gid_of(event), uid_of(event), target)
 
 

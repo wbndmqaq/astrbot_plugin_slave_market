@@ -32,26 +32,26 @@ tr td:last-child{border-radius:0 8px 8px 0;text-align:right;color:#8c3b2e;font-w
 </head>
 <body>
   <div class="hdr">
-    <h1>{{ nickname }} 的奴籍账册</h1>
+    <h1>{{ title }}</h1>
     <div class="uid">ID {{ uid }}</div>
   </div>
   <div class="stats">
-    <div class="stat"><div class="v">{{ currency }}</div><div class="k">金币</div></div>
-    <div class="stat"><div class="v">{{ value }}</div><div class="k">身价</div></div>
-    <div class="stat"><div class="v">{{ slave_count }}</div><div class="k">奴隶</div></div>
-    <div class="stat"><div class="v">{{ wins }}胜{{ losses }}负</div><div class="k">决斗战绩</div></div>
+    <div class="stat"><div class="v">{{ currency }}</div><div class="k">{{ t.gold }}</div></div>
+    <div class="stat"><div class="v">{{ value }}</div><div class="k">{{ t.value }}</div></div>
+    <div class="stat"><div class="v">{{ slave_count }}</div><div class="k">{{ t.slave_label }}</div></div>
+    <div class="stat"><div class="v">{{ wins }}{{ t.wins }}{{ losses }}{{ t.losses }}</div><div class="k">{{ t.record }}</div></div>
   </div>
-  <div class="master">👤 主人：<b>{{ master }}</b>{% if slaves_truncated %}（奴隶过多，仅展示前 100）{% endif %}</div>
-  <h2>奴隶名册</h2>
+  <div class="master">👤 {{ t.owner }}：<b>{{ master }}</b>{% if slaves_truncated %}{{ truncated_note }}{% endif %}</div>
+  <h2>{{ t.roster }}</h2>
   {% if slave_count == 0 %}
-  <div class="empty">名册空空如也 —— 快去「购买奴隶 @群友」吧</div>
+  <div class="empty">{{ t.roster_empty }}</div>
   {% else %}
   <table>
     <tbody>
-    {% for s in slaves %}<tr><td>{{ s.name }}（{{ s.id }}）</td><td>身价 {{ s.value }}</td></tr>{% endfor %}
+    {% for s in slaves %}<tr><td>{{ s.name }}（{{ s.id }}）</td><td>{{ t.value }} {{ s.value }}</td></tr>{% endfor %}
     </tbody>
   </table>
   {% endif %}
-  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+  <div class="foot">— {{ t.brand }} · {{ plugin_version or "" }} —</div>
 </body>
 </html>

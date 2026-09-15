@@ -70,6 +70,9 @@ from ._const import (
 from ._const import (
     _schema_meta as _schema_meta,
 )
+from ._const import (
+    set_ui_texts as set_ui_texts,
+)
 from ._purchase import _PurchaseMixin
 from ._rank import _RankMixin
 from ._rob import _RobMixin

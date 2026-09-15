@@ -143,8 +143,9 @@ class _CoreMixin:
     def set_rank_init(self, tiers) -> None:
         """热更新新玩家的初始分数/段位（gameTexts.ranking_tiers 首档）。
 
-        用户把段位表改成 500 起步后，新号必须是 500/首档名，而不是库里写死的
-        1000/「青铜」（那样打一场就会跳到用户表里完全不同的档位）。
+        用户把段位表改成 500 起步后，新号必须是 499/首档名（门槛是
+        svc._tier() 里「离开该档」的上界，500 已属下一档），而不是库里写死的
+        999/「青铜」。
         只影响**建号默认值**：已有存档的分数/段位以库里的行为准，
         `_sanitize()` 也仍然只认 _const 的静态默认值，不依赖运行期文案。
         """
@@ -178,11 +179,10 @@ class _CoreMixin:
         return conn
 
     def _close(self) -> None:
-        """置位 `_closed`（由 _close_sync 调用），让后续 `_connect()` 立即报错。
+        """空操作。`_closed` 标志由 `_backup.py` 的关闭流程置位。
 
         本类不持有长生命周期连接：每条 sync 方法用完即关（`_connect()` 每次新建），
-        因此这里没有需要 close 的实例连接——之前那个恒为 None 的 `self._conn`
-        分支是死代码，已删除。
+        因此这里没有需要 close 的实例连接。
         """
         return None
 
@@ -206,17 +206,16 @@ class _CoreMixin:
         await asyncio.to_thread(self._init_sync)
 
     def _init_sync(self) -> None:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    # 建表只以 _SCHEMA 为准（CREATE TABLE IF NOT EXISTS），
-                    # 不做任何旧库补列/迁移：列集与 _SCHEMA 不一致的存档会在
-                    # 首次读写时抛出带列名的清晰错误，需删除旧 db 让插件重建。
-                    conn.executescript(_SCHEMA)
-                    conn.commit()
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                # 建表只以 _SCHEMA 为准（CREATE TABLE IF NOT EXISTS），
+                # 不做任何旧库补列/迁移：列集与 _SCHEMA 不一致的存档会在
+                # 首次读写时抛出带列名的清晰错误，需删除旧 db 让插件重建。
+                conn.executescript(_SCHEMA)
+                conn.commit()
+            finally:
+                conn.close()
 
     async def transact(self, group_id: str, fn) -> object:
         """在单线程、单锁、单事务内完成一次跨玩家结算。
@@ -228,22 +227,21 @@ class _CoreMixin:
         return await asyncio.to_thread(self._transact_sync, str(group_id), fn)
 
     def _transact_sync(self, gid: str, fn) -> object:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                tx = Txn(self, conn, gid)
                 try:
-                    tx = Txn(self, conn, gid)
-                    try:
-                        result = fn(tx)
-                        tx._flush()
-                        conn.commit()
-                        return result
-                    except Abort as stop:
-                        conn.rollback()
-                        return stop.result
-                    except Exception:
-                        conn.rollback()
-                        raise
-                finally:
-                    conn.close()
+                    result = fn(tx)
+                    tx._flush()
+                    conn.commit()
+                    return result
+                except Abort as stop:
+                    conn.rollback()
+                    return stop.result
+                except Exception:
+                    conn.rollback()
+                    raise
+            finally:
+                conn.close()
 

@@ -35,19 +35,19 @@ h1{font-size:24px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
 </head>
 <body>
   {% if info_mode %}
-  <div class="hdr"><div class="icon">🏅</div><h1>奴隶排位赛信息</h1></div>
-  <div class="event">段位：{{ tier_desc or "（段位未配置）" }}</div>
+  <div class="hdr"><div class="icon">🏅</div><h1>{{ t.rank_info_title }}</h1></div>
+  <div class="event">{{ t.tier }}：{{ tier_desc or t.tier_unconfigured }}</div>
   <div class="settle" style="flex-direction:column">
     {% for r in rows or [] %}
     <div class="box" style="display:flex;justify-content:space-between;text-align:left;padding:9px 14px">
       <b>{{ r.name }}</b>
-      <span>{{ r.tier }} · {{ r.score }} 分 · {{ r.matches }} 场</span>
+      <span>{{ r.tier }} · {{ r.score }} {{ t.score_unit }} · {{ r.matches }} {{ t.matches_unit }}</span>
     </div>
     {% endfor %}
   </div>
   {% else %}
-  <div class="hdr"><div class="icon">🏅</div><h1>排位赛</h1></div>
-  <div class="event">当前事件「{{ event.name }}」（{{ event.desc }}）</div>
+  <div class="hdr"><div class="icon">🏅</div><h1>{{ t.rank_title }}</h1></div>
+  <div class="event">{{ t.current_event }}「{{ event.name }}」（{{ event.desc }}）</div>
   <div class="vs">
     <div class="side"><div class="name">{{ name }}</div></div>
     <div class="mid">VS</div>
@@ -57,15 +57,15 @@ h1{font-size:24px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
     </div>
   </div>
   <div class="verdict {{ 'win' if win else 'lose' }}">
-    <div class="t">{{ "胜 利 ！" if win else "失 败 …" }}</div>
-    <div class="s">分数变化 {{ "+" if diff > 0 else "" }}{{ diff }} → 当前 {{ score }} 分</div>
+    <div class="t">{{ t.win_spaced if win else t.lose_spaced }}</div>
+    <div class="s">{{ t.score_change }} {{ "+" if diff > 0 else "" }}{{ diff }} → {{ t.now }} {{ score }} {{ t.score_unit }}</div>
   </div>
   <div class="settle">
-    <div class="box"><div class="v">{{ tier }}</div><div class="k">当前段位</div></div>
-    <div class="box"><div class="v">{{ score }}</div><div class="k">当前分数</div></div>
-    <div class="box"><div class="v">+{{ reward }}</div><div class="k">金币奖励</div></div>
+    <div class="box"><div class="v">{{ tier }}</div><div class="k">{{ t.tier_now }}</div></div>
+    <div class="box"><div class="v">{{ score }}</div><div class="k">{{ t.score_now }}</div></div>
+    <div class="box"><div class="v">+{{ reward }}</div><div class="k">{{ t.gold_reward }}</div></div>
   </div>
   {% endif %}
-  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+  <div class="foot">— {{ t.brand }} · {{ plugin_version or "" }} —</div>
 </body>
 </html>

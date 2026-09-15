@@ -17,7 +17,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from ..core.result import notice
+from ..core.svc._const import ui_text
 
+# 私聊提示的代码内置默认值：运行期优先读 uiTexts 的 ui_gid_hint
 GID_HINT = "该功能只能在群聊中使用"
 
 
@@ -145,7 +147,9 @@ def install(cls, flt, module_path: str, routes) -> int:
             gid = gid_of(event)
             if _route.group_only and not gid:
                 event.stop_event()
-                yield event.plain_result(GID_HINT)
+                yield event.plain_result(
+                    ui_text("ui_gid_hint", GID_HINT)
+                )
                 return
             # refresh_card 自身已带超时并吞掉所有异常，这里无需再包一层
             await self.ctx.refresh_card(event)
@@ -157,7 +161,12 @@ def install(cls, flt, module_path: str, routes) -> int:
                     # 兜底逻辑本身再抛 AttributeError 会让指令静默失败
                     log = getattr(self, "logger", None) or _fallback_logger()
                     log.exception("[slave_market] 处理指令时出错")
-                    r = notice("⚠️", "处理请求时出错，请稍后再试。", [], tone="err")
+                    r = notice(
+                        "⚠️",
+                        ui_text("ui_generic_error", "处理请求时出错，请稍后再试。"),
+                        [],
+                        tone="err",
+                    )
             if r is None:
                 return
             event.stop_event()
@@ -169,7 +178,11 @@ def install(cls, flt, module_path: str, routes) -> int:
                 yield event.image_result(img)
             else:
                 text = str(r.get("text") or "").strip()
-                yield event.plain_result(text[:1800] if text else "（执行完成）")
+                yield event.plain_result(
+                    text[:1800]
+                    if text
+                    else ui_text("ui_generic_done", "（执行完成）")
+                )
 
         handler.__name__ = route.name
         handler.__qualname__ = f"{cls.__name__}.{route.name}"

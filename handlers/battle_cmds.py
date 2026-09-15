@@ -13,7 +13,12 @@ async def train(ctx, event):
     """训练指定奴隶，提升其身价。"""
     target = target_of(event)
     if not target:
-        return notice("🚫", "请 @ 要训练的奴隶，或输入对方 ID", [], tone="warn")
+        return notice(
+            "🚫",
+            ctx.t("ui_usage_target", "请 @ 要训练的奴隶，或输入对方 ID"),
+            [],
+            tone="warn",
+        )
     return await ctx.service.train(
         gid_of(event), uid_of(event), nickname_of(event), target
     )
@@ -29,7 +34,9 @@ async def arena(ctx, event):
     self_id = str(event.get_self_id())
     ids = at_targets(event) or [n for n in numbers(event) if n != self_id]
     if len(ids) < 2:
-        return notice("🚫", "用法：决斗 @奴隶1 @奴隶2", [], tone="warn")
+        return notice(
+            "🚫", ctx.t("ui_usage_arena", "用法：决斗 @奴隶1 @奴隶2"), [], tone="warn"
+        )
     return await ctx.service.arena(
         gid_of(event), uid_of(event), nickname_of(event), ids[0], ids[1]
     )
@@ -46,7 +53,12 @@ async def ranking_join(ctx, event):
     """让指定奴隶参加排位赛，赢取金币与分数。"""
     target = target_of(event)
     if not target:
-        return notice("🚫", "请 @ 参赛的奴隶，或输入对方 ID", [], tone="warn")
+        return notice(
+            "🚫",
+            ctx.t("ui_usage_rank_target", "请 @ 参赛的奴隶，或输入对方 ID"),
+            [],
+            tone="warn",
+        )
     return await ctx.service.ranking_join(
         gid_of(event), uid_of(event), nickname_of(event), target
     )

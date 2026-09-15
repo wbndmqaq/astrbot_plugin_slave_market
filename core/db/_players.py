@@ -80,57 +80,54 @@ class _PlayersMixin:
         return await asyncio.to_thread(self._exists_sync, str(group_id), str(user_id))
 
     def _exists_sync(self, gid: str, uid: str) -> bool:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    cur = conn.execute(
-                        "SELECT 1 FROM players WHERE gid=? AND uid=?", (gid, uid)
-                    )
-                    return cur.fetchone() is not None
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    "SELECT 1 FROM players WHERE gid=? AND uid=?", (gid, uid)
+                )
+                return cur.fetchone() is not None
+            finally:
+                conn.close()
 
     async def load(self, group_id: str, user_id: str) -> dict:
         return await asyncio.to_thread(self._load_sync, str(group_id), str(user_id))
 
     def _load_sync(self, gid: str, uid: str) -> dict:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    data, _found = self._read_row(conn, gid, uid)
-                    conn.commit()  # _read_row 可能写过 trash 留档
-                    return data
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                data, _found = self._read_row(conn, gid, uid)
+                conn.commit()  # _read_row 可能写过 trash 留档
+                return data
+            finally:
+                conn.close()
 
     async def delete(self, group_id: str, user_id: str) -> None:
         """删除存档：整行挪入 trash 留档，并清理其他玩家对该 uid 的主/奴引用。"""
         await asyncio.to_thread(self._delete_sync, str(group_id), str(user_id))
 
     def _delete_sync(self, gid: str, uid: str) -> None:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM players WHERE gid=? AND uid=?", (gid, uid)
+                ).fetchone()
+                if row is None:
+                    return
                 try:
-                    row = conn.execute(
-                        "SELECT * FROM players WHERE gid=? AND uid=?", (gid, uid)
-                    ).fetchone()
-                    if row is None:
-                        return
-                    try:
-                        self._archive_row(conn, gid, uid, row, reason="deleted")
-                        conn.execute(
-                            "DELETE FROM players WHERE gid=? AND uid=?", (gid, uid)
-                        )
-                        self._unlink_refs(conn, gid, uid)
-                        conn.commit()
-                    except Exception:
-                        conn.rollback()  # 防止部分语句残留到下一事务
-                        raise
-                finally:
-                    conn.close()
+                    self._archive_row(conn, gid, uid, row, reason="deleted")
+                    conn.execute(
+                        "DELETE FROM players WHERE gid=? AND uid=?", (gid, uid)
+                    )
+                    self._unlink_refs(conn, gid, uid)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()  # 防止部分语句残留到下一事务
+                    raise
+            finally:
+                conn.close()
 
     def _unlink_refs(self, conn: sqlite3.Connection, gid: str, uid: str) -> None:
         """清理悬空引用：别人的 master 指向它、或 slave 列表里含它。"""
@@ -168,15 +165,14 @@ class _PlayersMixin:
         await asyncio.to_thread(self._set_card_sync, str(group_id), str(user_id), card)
 
     def _set_card_sync(self, gid: str, uid: str, card: str) -> None:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    conn.execute(
-                        "UPDATE players SET nickname=?, updated_at=? WHERE gid=? AND uid=?",
-                        (str(card or "")[:_NICK_MAX], int(time.time()), gid, uid),
-                    )
-                    conn.commit()
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                conn.execute(
+                    "UPDATE players SET nickname=?, updated_at=? WHERE gid=? AND uid=?",
+                    (str(card or "")[:_NICK_MAX], int(time.time()), gid, uid),
+                )
+                conn.commit()
+            finally:
+                conn.close()
 

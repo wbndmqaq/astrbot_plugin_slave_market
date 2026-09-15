@@ -19,33 +19,31 @@ class _GroupMixin:
         return await asyncio.to_thread(self._list_players_sync, str(group_id))
 
     def _list_players_sync(self, gid: str) -> list[str]:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    cur = conn.execute(
-                        "SELECT uid FROM players WHERE gid=? ORDER BY uid", (gid,)
-                    )
-                    return [r["uid"] for r in cur.fetchall()]
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    "SELECT uid FROM players WHERE gid=? ORDER BY uid", (gid,)
+                )
+                return [r["uid"] for r in cur.fetchall()]
+            finally:
+                conn.close()
 
     async def group_counts(self) -> list[dict]:
         return await asyncio.to_thread(self._group_counts_sync)
 
     def _group_counts_sync(self) -> list[dict]:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    cur = conn.execute(
-                        "SELECT gid, COUNT(*) AS n FROM players GROUP BY gid ORDER BY gid"
-                    )
-                    return [
-                        {"gid": r["gid"], "count": int(r["n"])} for r in cur.fetchall()
-                    ]
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    "SELECT gid, COUNT(*) AS n FROM players GROUP BY gid ORDER BY gid"
+                )
+                return [
+                    {"gid": r["gid"], "count": int(r["n"])} for r in cur.fetchall()
+                ]
+            finally:
+                conn.close()
 
     # ---------- 聚合查询（避免"列 id 再逐个 load"的 N+1） ----------
 
@@ -53,16 +51,15 @@ class _GroupMixin:
         return await asyncio.to_thread(self._count_players_sync, str(group_id))
 
     def _count_players_sync(self, gid: str) -> int:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    cur = conn.execute(
-                        "SELECT COUNT(*) AS n FROM players WHERE gid=?", (gid,)
-                    )
-                    return int(cur.fetchone()["n"])
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    "SELECT COUNT(*) AS n FROM players WHERE gid=?", (gid,)
+                )
+                return int(cur.fetchone()["n"])
+            finally:
+                conn.close()
 
     async def query_players(
         self,
@@ -108,20 +105,19 @@ class _GroupMixin:
             "ORDER BY uid ASC LIMIT ?"
         )
         out: list[tuple[str, dict]] = []
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    rows = conn.execute(sql, (gid, like, like, limit)).fetchall()
-                    for row in rows:
-                        try:
-                            out.append((row["uid"], _row_to_player(row)))
-                        except Exception as e:  # noqa: BLE001
-                            logger.error(
-                                "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
-                            )
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                rows = conn.execute(sql, (gid, like, like, limit)).fetchall()
+                for row in rows:
+                    try:
+                        out.append((row["uid"], _row_to_player(row)))
+                    except Exception as e:  # noqa: BLE001
+                        logger.error(
+                            "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
+                        )
+            finally:
+                conn.close()
         return out
 
     async def all_player_refs(self, limit: int) -> list[dict]:
@@ -136,16 +132,15 @@ class _GroupMixin:
 
     def _all_player_refs_sync(self, limit: int) -> list[dict]:
         limit = max(1, int(limit))
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    rows = conn.execute(
-                        "SELECT gid, uid, nickname FROM players ORDER BY gid, uid LIMIT ?",
-                        (limit,),
-                    ).fetchall()
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT gid, uid, nickname FROM players ORDER BY gid, uid LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            finally:
+                conn.close()
         # 不在这里补「用户{uid}」这类展示文案：存储层不持有游戏文案（同 _KIND_* 约定），
         # 由服务层 profile 归一化时补。
         return [
@@ -189,21 +184,19 @@ class _GroupMixin:
         sql = f"SELECT * FROM players WHERE gid=? AND uid IN ({placeholders})"  # noqa: S608
         params: list = [gid, *uniq]
         out: list[tuple[str, dict]] = []
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    rows = conn.execute(sql, params).fetchall()
-                    for row in rows:
-                        try:
-                            out.append((row["uid"], _row_to_player(row)))
-                        except Exception as e:  # noqa: BLE001
-                            logger.error(
-                                "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
-                            )
-                    conn.commit()
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                rows = conn.execute(sql, params).fetchall()
+                for row in rows:
+                    try:
+                        out.append((row["uid"], _row_to_player(row)))
+                    except Exception as e:  # noqa: BLE001
+                        logger.error(
+                            "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
+                        )
+            finally:
+                conn.close()
         return out
 
     def _query_players_sync(
@@ -220,21 +213,19 @@ class _GroupMixin:
             sql += " LIMIT ? OFFSET ?"
             params += [max(0, int(limit)), max(0, int(offset))]
         out: list[tuple[str, dict]] = []
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    rows = conn.execute(sql, params).fetchall()
-                    for row in rows:
-                        try:
-                            out.append((row["uid"], _row_to_player(row)))
-                        except Exception as e:  # noqa: BLE001
-                            logger.error(
-                                "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
-                            )
-                    conn.commit()
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                rows = conn.execute(sql, params).fetchall()
+                for row in rows:
+                    try:
+                        out.append((row["uid"], _row_to_player(row)))
+                    except Exception as e:  # noqa: BLE001
+                        logger.error(
+                            "[slave_market] 跳过坏行 %s/%s: %s", gid, row["uid"], e
+                        )
+            finally:
+                conn.close()
         return out
 
     async def totals(self) -> dict:
@@ -242,24 +233,23 @@ class _GroupMixin:
         return await asyncio.to_thread(self._totals_sync)
 
     def _totals_sync(self) -> dict:
-        with self._lock:
-            with self._inflight_guard():
-                conn = self._connect()
-                try:
-                    r = conn.execute(
-                        "SELECT COUNT(*) AS players, COUNT(DISTINCT gid) AS groups,"
-                        " COALESCE(SUM(currency),0) AS currency,"
-                        " COALESCE(SUM(bank_balance),0) AS bank,"
-                        " COALESCE(SUM(CASE WHEN master<>'' THEN 1 ELSE 0 END),0) AS slaves"
-                        " FROM players"
-                    ).fetchone()
-                    return {
-                        "players": int(r["players"]),
-                        "groups": int(r["groups"]),
-                        "currency": _to_float(r["currency"]),
-                        "bank": _to_float(r["bank"]),
-                        "slaves": int(r["slaves"]),
-                    }
-                finally:
-                    conn.close()
+        with self._lock, self._inflight_guard():
+            conn = self._connect()
+            try:
+                r = conn.execute(
+                    "SELECT COUNT(*) AS players, COUNT(DISTINCT gid) AS groups,"
+                    " COALESCE(SUM(currency),0) AS currency,"
+                    " COALESCE(SUM(bank_balance),0) AS bank,"
+                    " COALESCE(SUM(CASE WHEN master<>'' THEN 1 ELSE 0 END),0) AS slaves"
+                    " FROM players"
+                ).fetchone()
+                return {
+                    "players": int(r["players"]),
+                    "groups": int(r["groups"]),
+                    "currency": _to_float(r["currency"]),
+                    "bank": _to_float(r["bank"]),
+                    "slaves": int(r["slaves"]),
+                }
+            finally:
+                conn.close()
 

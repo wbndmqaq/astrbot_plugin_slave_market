@@ -16,7 +16,7 @@ async def slave_help(ctx, event):
             "sub": data.get("sub"),
             "sections": data.get("sections", []),
         },
-        text=str(data.get("text") or "奴隶市场帮助"),
+        text=str(data.get("text") or ctx.t("ui_help_text_fallback", "奴隶市场帮助")),
     )
 
 
@@ -27,7 +27,11 @@ def _backup_route(kind: str):
             if not nums:
                 return notice(
                     "🚫",
-                    f"用法：奴隶{'恢复' if kind == 'restore' else '删除'}备份 序号",
+                    ctx.t(
+                        "ui_usage_backup_index",
+                        "用法：奴隶{action}备份 序号",
+                        action="恢复" if kind == "restore" else "删除",
+                    ),
                     [],
                     tone="warn",
                 )

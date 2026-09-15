@@ -30,7 +30,10 @@ class _WorkMixin:
         left = self._cd_left(data, "lastWorkingTime", cd, user_id, now)
         if left > 0:
             return notice(
-                "⏳", "打工冷却中", [f"剩余时间：{_cd_text(left)}"], tone="warn"
+                "⏳",
+                self.t("ui_work_cd", "打工冷却中"),
+                [self.t("ui_cd_left", "剩余时间：{left}", left=_cd_text(left))],
+                tone="warn",
             )
 
         value = data["value"]
@@ -39,22 +42,22 @@ class _WorkMixin:
                 lo = self._int("work", "slaveownerWageMin")
                 hi = self._int("work", "slaveownerWageMax")
                 wages = self._rand(lo, hi) + self._rand(int(value / 10), int(value / 5))
-                text = _sample(self.copy["slaveowner"])
+                text = _sample(self.copy.get("slaveowner") or [])
             else:
                 lo = self._int("work", "wageMin")
                 hi = self._int("work", "wageMax")
                 wages = self._rand(lo, hi) + self._rand(
                     int(value / 20), int(value / 10)
                 )
-                text = _sample(self.copy["success"])
+                text = _sample(self.copy.get("success") or [])
             data["currency"] = round(data["currency"] + wages, 2)
             data["lastWorkingTime"] = now
             # 提示语不要内联进 f-string 表达式：Python 3.12 之前
             # f-string 的表达式部分不允许出现反斜杠（\n），会是导入期 SyntaxError
             head = (
-                "您是尊贵的奴隶主\n【您】"
+                self.t("ui_work_owner_head", "您是尊贵的奴隶主\n【您】")
                 if is_admin
-                else "你没有群友只能自己去打工\n【你】"
+                else self.t("ui_work_solo_head", "你没有群友只能自己去打工\n【你】")
             )
             return R(
                 tmpl="work",
@@ -65,7 +68,15 @@ class _WorkMixin:
                     "wages": _fmt(wages),
                     "balance": _fmt(data["currency"]),
                 },
-                text=(f"{head}{text}{wages}金币\n当前共有{_fmt(data['currency'])}金币"),
+                text=(
+                f"{head}{text}"
+                + self.t(
+                    "ui_work_solo_result",
+                    "{wages}金币\n当前共有{balance}金币",
+                    wages=wages,
+                    balance=_fmt(data["currency"]),
+                )
+            ),
             )
 
         # 有奴隶：让奴隶打工
@@ -83,7 +94,7 @@ class _WorkMixin:
             if random.random() < slack_rate:  # 摸鱼
                 old = slave["value"]
                 slave["value"] = round(max(0.0, slave["value"] - slack_loss), 2)
-                text = _sample(self.copy["failure"])
+                text = _sample(self.copy.get("failure") or [])
                 text = (
                     text.replace("[A]", f"【{name}】")
                     .replace("[C]", _fmt(old))
@@ -95,7 +106,7 @@ class _WorkMixin:
                 lines.append(
                     {
                         "name": name,
-                        "story": _sample(self.copy["success"]),
+                        "story": _sample(self.copy.get("success") or []),
                         "income": str(earn),
                     }
                 )
@@ -104,20 +115,33 @@ class _WorkMixin:
         data["lastWorkingTime"] = now
         expense = ""
         if random.random() < self._num("work", "expenseRate"):
-            expense = _sample(self.copy["expenses"])
+            expense = _sample(self.copy.get("expenses") or [])
             m = re.search(r"\d+", expense)
             if m:
                 cost = int(m.group())
                 data["currency"] = round(max(0.0, data["currency"] - cost), 2)
 
         text = (
-            f"💼 打工结果（总收入 {wages} 金币，当前共有 {_fmt(data['currency'])} 金币）\n"
+            self.t(
+                "ui_work_team_head",
+                "💼 打工结果（总收入 {wages} 金币，当前共有 {balance} 金币）",
+                wages=wages,
+                balance=_fmt(data["currency"]),
+            )
+            + "\n"
             + "\n".join(
-                f"【{it['name']}】{it['story']}{it['income']}金币" for it in lines
+                self.t(
+                    "ui_work_row",
+                    "【{name}】{story}{income}金币",
+                    name=it["name"],
+                    story=it["story"],
+                    income=it["income"],
+                )
+                for it in lines
             )
         )
         if expense:
-            text += f"\n💸 意外事件：{expense}"
+            text += "\n" + self.t("ui_work_expense", "💸 意外事件：{text}", text=expense)
         return R(
             tmpl="work",
             data={

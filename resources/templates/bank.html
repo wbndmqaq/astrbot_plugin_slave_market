@@ -28,19 +28,19 @@ h1{font-size:24px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
 <body>
   <div class="hdr">
     <div class="icon">🏦</div>
-    <h1>银行信息</h1>
+    <h1>{{ t.bank_title }}</h1>
   </div>
   <div class="settle">
-    <div class="box"><div class="v">Lv.{{ level }}</div><div class="k">信用等级</div></div>
-    <div class="box"><div class="v">{{ balance }}</div><div class="k">当前存款</div></div>
-    <div class="box"><div class="v">{{ limit }}</div><div class="k">存储上限</div></div>
-    <div class="box"><div class="v">{{ interest }}</div><div class="k">可领利息</div></div>
+    <div class="box"><div class="v">Lv.{{ level }}</div><div class="k">{{ t.level }}</div></div>
+    <div class="box"><div class="v">{{ balance }}</div><div class="k">{{ t.deposit }}</div></div>
+    <div class="box"><div class="v">{{ limit }}</div><div class="k">{{ t.limit }}</div></div>
+    <div class="box"><div class="v">{{ interest }}</div><div class="k">{{ t.interest }}</div></div>
   </div>
   <div class="rows">
-    <div class="rrow"><b>升级费用</b><span>{{ upgrade_price }} 金币</span></div>
-    <div class="rrow"><b>当前余额</b><span>{{ currency }} 金币</span></div>
-    <div class="rrow"><b>利率说明</b><span>每小时 {{ rate }}，最多计算 {{ max_hours }} 小时</span></div>
+    <div class="rrow"><b>{{ t.upgrade_price }}</b><span>{{ upgrade_price }} {{ t.gold }}</span></div>
+    <div class="rrow"><b>{{ t.currency }}</b><span>{{ currency }} {{ t.gold }}</span></div>
+    <div class="rrow"><b>{{ t.rate_label }}</b><span>{{ t.per_hour }} {{ rate }}，{{ t.max_calc }} {{ max_hours }} {{ t.hours }}</span></div>
   </div>
-  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+  <div class="foot">— {{ t.brand }} · {{ plugin_version or "" }} —</div>
 </body>
 </html>

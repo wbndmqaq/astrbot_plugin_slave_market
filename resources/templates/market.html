@@ -29,11 +29,11 @@ tr td:nth-child(5){background:transparent;border:0;width:40px;text-align:right;c
 <body>
   <div class="hdr">
     <div class="icon">🛒</div>
-    <h1>奴 隶 市 场</h1>
-    <div class="sub">共 {{ total }} 人在册 · 未出场过的身价均为 100</div>
+    <h1>{{ t.market_title }}</h1>
+    <div class="sub">{{ sub }}</div>
   </div>
   {% if total == 0 %}
-  <div class="empty">市场上还没有人，快叫群友来玩吧</div>
+  <div class="empty">{{ t.market_empty }}</div>
   {% else %}
   <table>
     <tbody>
@@ -42,13 +42,13 @@ tr td:nth-child(5){background:transparent;border:0;width:40px;text-align:right;c
       <td>{{ loop.index }}</td>
       <td>{{ it.name }}</td>
       <td>{{ it.id }}</td>
-      <td>身价 {{ it.value }}</td>
-      <td>主：{{ it.master }}</td>
+      <td>{{ t.value }} {{ it.value }}</td>
+      <td>{{ t.owner_short }}{{ it.master }}</td>
     </tr>
     {% endfor %}
     </tbody>
   </table>
   {% endif %}
-  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+  <div class="foot">— {{ t.brand }} · {{ plugin_version or "" }} —</div>
 </body>
 </html>

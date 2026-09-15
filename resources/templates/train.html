@@ -32,16 +32,16 @@ h1{font-size:24px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
 <body>
   <div class="hdr">
     <div class="icon">🎯</div>
-    <h1>{{ "训练结果" if single else "一键训练结算" }}</h1>
+    <h1>{{ t.train_result if single else t.train_all_result }}</h1>
   </div>
   {% if not single %}
   <div class="settle">
-    <div class="box"><div class="v">{{ ok }}/{{ total }}</div><div class="k">训练成功</div></div>
-    <div class="box"><div class="v">{{ spent }}</div><div class="k">总花费（金币）</div></div>
-    <div class="box"><div class="v">{{ balance }}</div><div class="k">当前余额（金币）</div></div>
+    <div class="box"><div class="v">{{ ok }}/{{ total }}</div><div class="k">{{ t.train_ok }}</div></div>
+    <div class="box"><div class="v">{{ spent }}</div><div class="k">{{ t.total_spent }}</div></div>
+    <div class="box"><div class="v">{{ balance }}</div><div class="k">{{ t.balance_gold }}</div></div>
   </div>
   {% else %}
-  <div class="settle"><div class="box"><div class="v">{{ balance }}</div><div class="k">当前余额（金币）</div></div></div>
+  <div class="settle"><div class="box"><div class="v">{{ balance }}</div><div class="k">{{ t.balance_gold }}</div></div></div>
   {% endif %}
   {% for r in results or [] %}
   <div class="row">
@@ -50,6 +50,6 @@ h1{font-size:24px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
     <span class="detail">{{ r.detail }}</span>
   </div>
   {% endfor %}
-  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+  <div class="foot">— {{ t.brand }} · {{ plugin_version or "" }} —</div>
 </body>
 </html>

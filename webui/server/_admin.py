@@ -13,7 +13,7 @@ import re
 import secrets
 from pathlib import Path
 
-from ...core.auth import AuthError
+from ...core.auth import AuthError, is_argon2_hash
 from ...core.texts import TEXT_FILES, effective_text, find_plugin_file, override_path
 from ._const import (
     _BAD,
@@ -58,9 +58,11 @@ class _AdminMixin:
         show_plain = bool(self.ctx.config.get("webui_show_password_plain"))
         for k, meta in schema.items():
             v = self.ctx.config.get(k, meta.get("default"))
-            # 隐藏类配置仅在前端明确请求"明文暂存"时才回传明文，否则恒为空
+            # 隐藏类配置仅在前端明确请求"明文暂存"时才回传明文，否则恒为空。
+            # 配置里已是哈希形态（面板改密写回的）时恒不回传：哈希不是密码，
+            # 回显它只会诱导运维把它当成密码再提交回去。
             if k == "webui_password":
-                cfg[k] = v if show_plain else ""
+                cfg[k] = "" if is_argon2_hash(str(v or "")) else (v if show_plain else "")
             elif k in CONFIG_HIDDEN_KEYS:
                 cfg[k] = ""
             else:
@@ -174,6 +176,11 @@ class _AdminMixin:
                 # 完全共用（_password_error），旧实现这里没有最小长度，面板可以把
                 # 密码设成 1 个字符。
                 if k == "webui_password" and v:
+                    if is_argon2_hash(str(v)):
+                        # 防呆：把配置里的哈希当明文提交会真的把密码改成
+                        # "那串哈希"。哈希不是密码，直接跳过。
+                        notes.append("管理员密码未更新：提交的是哈希串而非新密码")
+                        continue
                     bad = _password_error(str(v))
                     if bad:
                         notes.append(f"管理员密码未更新：{bad}")
@@ -268,6 +275,8 @@ class _AdminMixin:
             return "内容为空"
         if name == "gameTexts":
             return self._validate_game_texts(data)
+        if name == "uiTexts":
+            return self._validate_ui_texts(data)
         for k, v in data.items():
             if not isinstance(k, str) or not re.fullmatch(r"[A-Za-z0-9_]+", k):
                 return f"非法键名：{str(k)[:30]}"
@@ -325,6 +334,22 @@ class _AdminMixin:
             missing = [k for k in _COPY_REQUIRED if not data.get(k)]
             if missing:
                 return f"以下文案不能为空：{'、'.join(missing)}"
+        return None
+
+    def _validate_ui_texts(self, data) -> str | None:
+        """uiTexts（交互回复/模板文案）校验：键名合法 + 值为非空字符串。
+
+        键值全部是字符串（svc 层 ui_text(key, default) 直接取用），这与
+        workCopywriting 的「字符串数组」不同。占位符 {name} 之类的写法
+        不在这里校验：ui_text 的填充是宽容的，写错占位只会原样显示。
+        """
+        for k, v in data.items():
+            if not isinstance(k, str) or not re.fullmatch(r"[A-Za-z0-9_]+", k):
+                return f"非法键名：{str(k)[:30]}"
+            if not isinstance(v, str) or not v.strip():
+                return f"键 {k} 必须是非空字符串"
+            if len(v) > _TEXT_LEN_MAX:
+                return f"键 {k} 超过 {_TEXT_LEN_MAX} 字"
         return None
 
     def _validate_game_texts(self, data) -> str | None:
@@ -479,7 +504,7 @@ class _AdminMixin:
         target_path = self._texts_override_path(name)
         async with self._texts_lock:  # 串行化：并发保存不会写出半成品
             await asyncio.to_thread(self._write_atomic, target_path, content)
-        # 热更新运行中文案：workCopywriting/gameTexts -> 游戏文案；help -> 帮助长文本
+        # 热更新运行中文案：workCopywriting/gameTexts/uiTexts -> 游戏文案；help -> 帮助长文本
         if name == "workCopywriting":
             # 与既有文案**合并**而非整体替换：ctx.copy 里还装着决斗/排位赛的
             # arena_actions / ranking_opponents / ranking_events / ranking_tiers /
@@ -488,6 +513,9 @@ class _AdminMixin:
             self.ctx.set_copywriting({**self.ctx.copy, **data})
         elif name == "gameTexts":
             # 与既有文案合并而非整体替换：gameTexts 只含决斗/排位赛键
+            self.ctx.set_copywriting({**self.ctx.copy, **data})
+        elif name == "uiTexts":
+            # 与既有文案合并而非整体替换：uiTexts 只含交互回复/模板文案键
             self.ctx.set_copywriting({**self.ctx.copy, **data})
         elif name == "help":
             await asyncio.to_thread(self.ctx.reload_texts)

@@ -83,13 +83,59 @@ def _fmt(x: float) -> str:
     return f"{float(x):.2f}"
 
 
+# ---------------------------------------------------------------------------
+# 用户可见文案（uiTexts 表）。
+#
+# svc 层与 handlers 的全部交互回复都经 ui_text(key, default, **vars) 取文案：
+# - 表里有该键（非空字符串）→ 用文案表的值；
+# - 没有（uiTexts.json 被裁剪 / 键被清空）→ 回落到代码里的 default；
+# - default 与 uiTexts.json 的值逐字一致（同一来源维护），并有 lint 测试
+#   保证两边不漂移。
+# _UI_TEXTS 由 GameCtx.set_copywriting 在启动与 WebUI 热更新时注入。
+# ---------------------------------------------------------------------------
+_UI_TEXTS: dict[str, str] = {}
+
+
+def set_ui_texts(copy: dict | None) -> None:
+    """从合并后的文案表里挑出字符串键，供 ui_text() 查询（同步函数）。"""
+    global _UI_TEXTS
+    _UI_TEXTS = {
+        k: v for k, v in (copy or {}).items() if isinstance(v, str) and v
+    }
+
+
+def ui_text(key: str, default: str, **vars: object) -> str:
+    """取一条用户可见文案，按需填充 {占位}。
+
+    占位填充是宽容的：文案里缺变量/多写占位都原样保留，绝不让一句改坏的
+    文案把指令打成异常（运维手改 JSON 是设计内用法）。
+    """
+
+    class _SafeVars(dict):
+        def __missing__(self, k: str) -> str:
+            return "{" + k + "}"
+
+    v = _UI_TEXTS.get(key)
+    out = v if isinstance(v, str) and v else default
+    if not vars:
+        return out
+    try:
+        return str(out).format_map(_SafeVars(vars))
+    except (IndexError, ValueError, KeyError, TypeError, AttributeError):
+        # 裸 { } / 非法格式说明符 / 取下标取属性等写法错误：原样输出
+        return str(out)
+
+
 def _cd_text(seconds: int) -> str:
     h, m, s = seconds // 3600, seconds % 3600 // 60, seconds % 60
+    hour = ui_text("ui_unit_hour", "小时")
+    minute = ui_text("ui_unit_minute", "分")
+    second = ui_text("ui_unit_second", "秒")
     if h > 0:
-        return f"{h}小时{m}分{s}秒"
+        return f"{h}{hour}{m}{minute}{s}{second}"
     if m > 0:
-        return f"{m}分{s}秒"
-    return f"{s}秒"
+        return f"{m}{minute}{s}{second}"
+    return f"{s}{second}"
 
 
 def _sample(lst: list) -> str:

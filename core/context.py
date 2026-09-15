@@ -19,9 +19,10 @@ import astrbot.api.message_components as Comp
 from .db import PlayerDB
 from .renderer import PlaywrightRenderer
 from .service import GameService
+from .svc import set_ui_texts
 from .texts import Texts
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # 昵称缓存：条目 (expire_ts, card)；容量超限先清过期再清最旧
 _CARD_CACHE_CAP = 2000
@@ -71,6 +72,7 @@ class GameCtx:
             bank_init=config.get("bank") or {},
         )
         self.service = GameService(self.db, config, copywriting)
+        set_ui_texts(copywriting)
         self._sync_copy_to_storage()
         self.renderer = PlaywrightRenderer(
             self.data_root / "screenshots",
@@ -88,8 +90,9 @@ class GameCtx:
         """把文案里影响「建号默认值」的部分同步给存储层。
 
         目前只有 gameTexts 的段位表首档（新号的初始分数/段位）。文案是唯一
-        事实来源：用户在 WebUI 把段位表改成 500 起步后，建号必须是 500/首档名，
-        否则库里写死的 1000/「青铜」会漏到界面，打一场就跳到别的档位。
+        事实来源：用户在 WebUI 把段位表改成 500 起步后，建号必须是 499/首档名
+        （门槛是「离开该档」的上界），否则库里写死的默认值会漏到界面，
+        打一场就跳到别的档位。
         """
         self.db.set_rank_init((self.copy or {}).get("ranking_tiers"))
 
@@ -97,7 +100,29 @@ class GameCtx:
         """设置/热更新游戏文案（同步更新 ctx 与 service 的引用 + 建号默认值）。"""
         self.copy = copy
         self.service.copy = copy
+        # uiTexts（交互回复/模板文案）注入 svc 层的模块级查询表：
+        # handlers 的用法提示与 _cd_text 的单位词没有 self.copy 可走，
+        # 统一经 ui_text() 读这张表（缺失时回落代码内置默认值）
+        set_ui_texts(copy)
         self._sync_copy_to_storage()
+
+    def t(self, key: str, default: str, **vars: object) -> str:
+        """handlers 用：取一条用户可见文案（uiTexts 表，缺失回落 default）。"""
+        from .svc._const import ui_text
+
+        return ui_text(key, default, **vars)
+
+    def template_texts(self) -> dict:
+        """模板静态文案（uiTexts 里 tpl_ 前缀的键），注入 Jinja2 的 `t`。
+
+        模板里写 {{ t.键名 }}，键名不带 tpl_ 前缀；键缺失时模板显示空 ——
+        uiTexts.json 与代码内置值随插件分发，正常情况不会缺。
+        """
+        return {
+            k[4:]: v
+            for k, v in (self.copy or {}).items()
+            if k.startswith("tpl_") and isinstance(v, str)
+        }
 
     def reload_texts(self, force: bool = True) -> None:
         """热更新长文本（帮助等），由 WebUI 保存后调用。
@@ -261,6 +286,9 @@ class GameCtx:
         try:
             data = dict(data or {})
             data.setdefault("plugin_version", VERSION)
+            # 模板静态文案统一注入：10 套模板里的标题/字段名/兜底值都从这里取，
+            # 免得 HTML 成为文案外置的最后一个例外
+            data.setdefault("t", self.template_texts())
             tmpl_str = self._tmpl_text.get(tmpl)
             if tmpl_str is None:  # 模板内容随插件发布固定，只读一次
                 tmpl_str = await asyncio.to_thread(

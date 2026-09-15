@@ -24,7 +24,13 @@ class _RobMixin:
             ]
             if not candidates:
                 return notice(
-                    "🕳️", "这个群里还没有其他人参与游戏，无处可抢", [], tone="warn"
+                    "🕳️",
+                    self.t(
+                        "ui_rob_nobody",
+                        "这个群里还没有其他人参与游戏，无处可抢",
+                    ),
+                    [],
+                    tone="warn",
                 )
         return await self.db.transact(
             group_id, lambda tx: self._rob(tx, user_id, nickname, target, candidates)
@@ -39,18 +45,30 @@ class _RobMixin:
         left = self._cd_left(data, "lastRobTime", cd, user_id, now)
         if left > 0:
             return notice(
-                "⏳", "抢劫冷却中", [f"剩余时间：{_cd_text(left)}"], tone="warn"
+                "⏳",
+                self.t("ui_rob_cd", "抢劫冷却中"),
+                [self.t("ui_cd_left", "剩余时间：{left}", left=_cd_text(left))],
+                tone="warn",
             )
 
         if not target:
             target = random.choice(candidates)
         target = str(target)
         if target == str(user_id):
-            return notice("🚫", "你不能抢劫自己", [], tone="warn")
+            return notice(
+                "🚫", self.t("ui_rob_self", "你不能抢劫自己"), [], tone="warn"
+            )
         if target == str(data["master"]):
-            return notice("🚫", "你不能抢劫你的主人", [], tone="warn")
+            return notice(
+                "🚫", self.t("ui_rob_master", "你不能抢劫你的主人"), [], tone="warn"
+            )
         if not tx.exists(target):
-            return notice("🕳️", "对方还没有参与游戏，无从下手", [], tone="warn")
+            return notice(
+                "🕳️",
+                self.t("ui_rob_target_missing", "对方还没有参与游戏，无从下手"),
+                [],
+                tone="warn",
+            )
 
         victim = tx.get(target)
         victim_name = self._name(victim, target)
@@ -66,14 +84,28 @@ class _RobMixin:
             victim["currency"] = round(max(0.0, victim["currency"] - amount), 2)
             result = notice(
                 "🗡️",
-                "抢劫成功！",
-                [f"你从 {victim_name} 那里抢到了 {_fmt(amount)} 金币"],
+                self.t("ui_rob_ok", "抢劫成功！"),
+                [
+                    self.t(
+                        "ui_rob_gain",
+                        "你从 {name} 那里抢到了 {amount} 金币",
+                        name=victim_name,
+                        amount=_fmt(amount),
+                    )
+                ],
             )
         else:
             amount = round(min(data["currency"] * penalty_rate, max_penalty), 2)
             data["currency"] = round(max(0.0, data["currency"] - amount), 2)
             result = notice(
-                "🛡️", "抢劫失败！", [f"你被罚了 {_fmt(amount)} 金币"], tone="err"
+                "🛡️",
+                self.t("ui_rob_fail", "抢劫失败！"),
+                [
+                    self.t(
+                        "ui_rob_fine", "你被罚了 {amount} 金币", amount=_fmt(amount)
+                    )
+                ],
+                tone="err",
             )
 
         data["lastRobTime"] = now

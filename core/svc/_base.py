@@ -10,13 +10,19 @@ from __future__ import annotations
 import math
 import random
 
-from ._const import _schema_meta
+from ._const import _schema_meta, ui_text
 
 
 class _BaseMixin:
     # ================= 基础工具 =================
 
-    # ================= 基础工具 =================
+    def t(self, key: str, default: str, **vars: object) -> str:
+        """取一条用户可见文案（uiTexts 表，缺失回落代码内置 default）。
+
+        svc 层全部面向用户的回复都从这里取文案；default 必须与
+        resources/data/uiTexts.json 里的值逐字一致（lint 测试核对）。
+        """
+        return ui_text(key, default, **vars)
 
     def _meta(self, *path) -> dict:
         """按点分路径取 schema 元数据；缺失时返回空 dict。"""
@@ -98,11 +104,10 @@ class _BaseMixin:
 
     async def name_of(self, group_id: str, user_id: str) -> str:
         data = await self.db.load(group_id, user_id)
-        return data.get("nickname") or f"用户{user_id}"
+        return data.get("nickname") or self.t("ui_unknown_user", "用户{uid}", uid=user_id)
 
-    @staticmethod
-    def _name(data: dict, uid: str) -> str:
-        return data.get("nickname") or f"用户{uid}"
+    def _name(self, data: dict, uid: str) -> str:
+        return data.get("nickname") or self.t("ui_unknown_user", "用户{uid}", uid=uid)
 
     @staticmethod
     def _owns(data: dict, uid: str) -> bool:

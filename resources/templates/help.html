@@ -28,7 +28,7 @@ h1{font-size:26px;letter-spacing:6px;color:#8c3b2e;margin-top:6px}
 <body>
   <div class="hdr">
     <div class="icon">📜</div>
-    <h1>{{ title or "奴隶市场 · 帮助" }}</h1>
+    <h1>{{ title or t.help_default_title }}</h1>
     <div class="sub">{{ sub or "" }}</div>
   </div>
   <div class="grid">
@@ -39,6 +39,6 @@ h1{font-size:26px;letter-spacing:6px;color:#8c3b2e;margin-top:6px}
     </div>
     {% endfor %}
   </div>
-  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+  <div class="foot">— {{ t.brand }} · {{ plugin_version or "" }} —</div>
 </body>
 </html>

@@ -204,15 +204,21 @@ class _AuthMixin:
             return _json({"error": "尚未初始化管理员密码"}, 503)
         ok = await asyncio.to_thread(self._hasher.verify, st["hash"], pwd)
         if ok and self._hasher.needs_rehash(st["hash"]):
-            # 参数升级：透明重哈希，不影响本次登录
+            # 参数升级：透明重哈希，不影响本次登录。重哈希只更新磁盘哈希，
+            # 但配置里的 webui_password（哈希形态）是磁盘哈希的同步源——
+            # 不同步的话，下次重启引导会按配置里的旧哈希把磁盘打回去，
+            # Argon2 参数升级每次重启都被静默回退。
             try:
-                await asyncio.to_thread(
+                new_st = await asyncio.to_thread(
                     rotate_password,
                     self._pwd_store,
                     self._hasher,
                     pwd,
                     must_reset=bool(st.get("must_reset")),
                 )
+                new_hash = str(new_st.get("hash") or "")
+                if new_hash:
+                    await asyncio.to_thread(self._sync_config_password, new_hash)
                 self.log.info("[奴隶市场] Argon2id 参数已升级，密码透明重哈希")
             except Exception:  # noqa: BLE001, S110 - 重哈希失败不影响本次登录
                 pass
@@ -292,28 +298,31 @@ class _AuthMixin:
     async def _rotate_and_revoke(
         self, plaintext: str, cur_jti: str | None, ip: str, ua: str
     ) -> int:
-        """改密的**唯一**实现：轮换哈希 → 同步配置种子 → 吊销既有会话 → 回写当前会话。
+        """改密的**唯一**实现：轮换哈希 → 同步配置哈希 → 吊销既有会话 → 回写当前会话。
 
         改密必须吊销既有会话（含配置面板改密这条路径）：密码失窃后改密是标准
         补救动作，如果偷到 cookie 的人手里的 JWT 还能用，补救就是无效的。
         （历史上 `_change_password` 做了 revoke_all，配置面板的改密却没做。）
 
-        必须同时把新明文写回配置：配置里的 `webui_password` 是磁盘哈希的
-        **种子** —— `main._bootstrap_admin_password` 启动时会拿它与磁盘哈希比对、
-        不一致就按配置重置。改密后不回写的话，任何一次 WebUI 改密（面板改密 /
-        change-password / 首次强制改密）都会在下次重载插件时被静默回滚成配置里
-        的旧明文：新密码失效、旧密码复活，而界面与日志都宣称"密码已更新"。
+        必须同时把新密码的**哈希**写回配置：配置里的 `webui_password` 是磁盘
+        哈希的**同步源** —— `main._bootstrap_admin_password` 启动时会拿它与磁盘
+        哈希比对、不一致就按配置同步。改密后不回写的话，任何一次 WebUI 改密
+        （面板改密 / change-password / 首次强制改密）都会在下次重载插件时被
+        静默回滚成配置里的旧值：新密码失效、旧密码复活，而界面与日志都宣称
+        "密码已更新"。回写哈希而不是明文：配置文件是运维可读的磁盘文件，
+        明文长期落盘与「明文不出现在磁盘」的安全模型直接矛盾（哈希形态由
+        启动引导按 `$argon2` 前缀识别，语义与明文形态完全一致）。
 
         返回被吊销的会话数。调用方负责长度校验与错误呈现。
         """
-        await asyncio.to_thread(
+        st = await asyncio.to_thread(
             rotate_password,
             self._pwd_store,
             self._hasher,
             plaintext,
             must_reset=False,
         )
-        await asyncio.to_thread(self._sync_config_password, plaintext)
+        await asyncio.to_thread(self._sync_config_password, str(st.get("hash") or ""))
         n = await asyncio.to_thread(self._sessions.revoke_all)
         if cur_jti:
             # 当前会话的 JWT 仍然有效（签名+exp 都没变），把会话表里的行放回去
@@ -322,37 +331,43 @@ class _AuthMixin:
             )
         return n
 
-    def _sync_config_password(self, plaintext: str) -> None:
-        """把新明文写回插件配置（同步函数，调用方负责入线程）。
+    def _sync_config_password(self, hash_str: str) -> None:
+        """把新密码的 Argon2id 哈希写回插件配置（同步函数，调用方负责入线程）。
 
         写不进去（配置对象不支持保存）不算失败：只影响"下次重载是否回滚"，
         所以记一条 warning 让运维知道需要手工同步配置项。**两个分支都要记**：
         只用 `save_config` 是否存在来判"写没写进去"会漏掉"内存视图改了、磁盘
         没落盘"这种最隐蔽的形态——下次重载密码被静默回滚，日志里却什么都没有。
         """
+        if not hash_str:
+            self.log.warning(
+                "[奴隶市场] 新密码哈希为空，未能写回插件配置；"
+                "下次重载插件会按配置里的 webui_password 同步密码，请手工核对该项"
+            )
+            return
         cfg = getattr(self.ctx, "config", None)
         if cfg is None or not hasattr(cfg, "__setitem__"):
             self.log.warning(
-                "[奴隶市场] 新密码未能写回插件配置（当前配置对象不可写）；"
-                "下次重载插件会按配置里的 webui_password 重置密码，请手工同步该项"
+                "[奴隶市场] 新密码哈希未能写回插件配置（当前配置对象不可写）；"
+                "下次重载插件会按配置里的 webui_password 同步密码，请手工核对该项"
             )
             return
         try:
-            cfg["webui_password"] = plaintext
+            cfg["webui_password"] = hash_str
             save = getattr(cfg, "save_config", None)
             if callable(save):
                 save()
             else:
                 # 与 _admin_config_save 的 note 同口径
                 self.log.warning(
-                    "[奴隶市场] 新密码已写入配置内存视图，但当前配置对象不支持"
+                    "[奴隶市场] 新密码哈希已写入配置内存视图，但当前配置对象不支持"
                     "持久化（无 save_config）；重载插件后会恢复原值，请手工同步"
                     "配置项 webui_password"
                 )
         except Exception as e:  # noqa: BLE001 - 同步失败不阻断改密本身
             self.log.warning(
-                f"[奴隶市场] 新密码未能写回插件配置（{e}）；"
-                "下次重载插件会按配置里的 webui_password 重置密码，请手工同步该项"
+                f"[奴隶市场] 新密码哈希未能写回插件配置（{e}）；"
+                "下次重载插件会按配置里的 webui_password 同步密码，请手工核对该项"
             )
 
     async def _change_password(self, request):

@@ -16,7 +16,7 @@ class _WebApiMixin:
         return {
             "gid": str(gid),
             "uid": str(uid),
-            "nickname": p.get("nickname") or f"用户{uid}",
+            "nickname": p.get("nickname") or self.t("ui_unknown_user", "用户{uid}", uid=uid),
             "currency": round(p["currency"], 2),
             "value": round(p["value"], 2),
             "master": p.get("master") or "",
@@ -72,7 +72,7 @@ class _WebApiMixin:
             {
                 "gid": r["gid"],
                 "uid": r["uid"],
-                "nickname": r["nickname"] or f"用户{r['uid']}",
+                "nickname": r["nickname"] or self.t("ui_unknown_user", "用户{uid}", uid=r["uid"]),
             }
             for r in rows[:cap]
         ]

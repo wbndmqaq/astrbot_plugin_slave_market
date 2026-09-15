@@ -21,27 +21,52 @@ class _ArenaMixin:
         data = tx.get(user_id, nickname)
         sid1, sid2 = str(sid1), str(sid2)
         if sid1 == sid2:
-            return notice("🚫", "不能让同一个奴隶自己决斗", [], tone="warn")
+            return notice(
+                "🚫",
+                self.t("ui_arena_same", "不能让同一个奴隶自己决斗"),
+                [],
+                tone="warn",
+            )
         # 两个参战方都必须是自己的奴隶
         if not self._owns(data, sid1):
-            return notice("🚫", "参战奴隶 1 不是你的奴隶", [], tone="warn")
+            return notice(
+                "🚫",
+                self.t("ui_arena_not_own_1", "参战奴隶 1 不是你的奴隶"),
+                [],
+                tone="warn",
+            )
         if not self._owns(data, sid2):
-            return notice("🚫", "参战奴隶 2 不是你的奴隶", [], tone="warn")
+            return notice(
+                "🚫",
+                self.t("ui_arena_not_own_2", "参战奴隶 2 不是你的奴隶"),
+                [],
+                tone="warn",
+            )
 
         now = _now()
         cd = self._int("arena", "cooldown")
         left = self._cd_left(data, "lastBattleTime", cd, user_id, now)
         if left > 0:
             return notice(
-                "⏳", "决斗冷却中", [f"剩余时间：{_cd_text(left)}"], tone="warn"
+                "⏳",
+                self.t("ui_arena_cd", "决斗冷却中"),
+                [self.t("ui_cd_left", "剩余时间：{left}", left=_cd_text(left))],
+                tone="warn",
             )
 
         fee = self._int("arena", "entryFee")
         if data["currency"] < fee:
             return notice(
                 "💸",
-                "余额不足",
-                [f"参加决斗需要 {fee} 金币报名费，你只有 {_fmt(data['currency'])}"],
+                self.t("ui_gold_short", "金币不足"),
+                [
+                    self.t(
+                        "ui_arena_need",
+                        "参加决斗需要 {fee} 金币报名费，你只有 {have}",
+                        fee=fee,
+                        have=_fmt(data["currency"]),
+                    )
+                ],
                 tone="err",
             )
 
@@ -55,7 +80,10 @@ class _ArenaMixin:
         if not actions:
             return notice(
                 "🚫",
-                "决斗动作文案未配置（arena_actions 为空），请在 WebUI 文案中补充",
+                self.t(
+                    "ui_arena_no_actions",
+                    "决斗动作文案未配置（arena_actions 为空），请在 WebUI 文案中补充",
+                ),
                 [],
                 tone="err",
             )
@@ -77,12 +105,16 @@ class _ArenaMixin:
         # 只保证"不因这次失败跌破下限"，不能无条件抬升：
         # 否则摸鱼掉到 60 的奴隶输一场反而涨回 100，可被用来洗身价
         floor = min(self._num("arena", "minValue"), loser["value"])
-        # 身价守恒：胜者涨幅取自败者跌幅与一个上限的较小值，
+        # 败者实际跌幅先算：跌破下限时跌幅会被钳小，胜者涨幅必须按【实际
+        # 跌幅】取，否则钳掉的差额凭空铸出（身价守恒被打破，每次触底决斗
+        # 都是净通涨）。实际跌幅可能为 0（败者已在本档下限）→ 胜者不涨。
+        actual_dec = loser["value"] - max(floor, loser["value"] - lose_dec)
+        # 身价守恒：胜者涨幅取自败者实际跌幅与一个上限的较小值，
         # 否则 arena.cooldown=0 + 自己的两个奴隶互刷会让胜者身价单调上升无上限
         cap = int(self._num("arena", "maxWinBonus") * winner["value"])
-        win_inc = min(win_inc, lose_dec, cap)
+        win_inc = min(win_inc, actual_dec, cap)
         winner["value"] = round(winner["value"] + win_inc, 2)
-        loser["value"] = round(max(floor, loser["value"] - lose_dec), 2)
+        loser["value"] = round(loser["value"] - actual_dec, 2)
         data["currency"] = round(data["currency"] - fee + reward, 2)
         data["lastBattleTime"] = now
         if s1_wins:
@@ -92,12 +124,46 @@ class _ArenaMixin:
 
         process = [_sample(actions) for _ in range(self._rand(2, 3))]
         text = (
-            f"⚔️ 决斗开始：{n1} VS {n2}\n" + "\n".join(process) + "\n"
-            f"决斗结束！{wn} 获胜！\n"
-            f"{wn} 身价 +{_fmt(win_inc)} → {_fmt(winner['value'])}\n"
-            f"{ln} 身价 -{_fmt(lose_dec)} → {_fmt(loser['value'])}\n"
-            f"你支付报名费 {fee} 金币，获得奖励 {reward} 金币\n"
-            f"战绩：{data['battleStats']['wins']} 胜 {data['battleStats']['losses']} 负"
+            self.t(
+                "ui_arena_head",
+                "⚔️ 决斗开始：{n1} VS {n2}",
+                n1=n1,
+                n2=n2,
+            )
+            + "\n"
+            + "\n".join(process)
+            + "\n"
+            + self.t("ui_arena_win", "决斗结束！{name} 获胜！", name=wn)
+            + "\n"
+            + self.t(
+                "ui_arena_winner_value",
+                "{name} 身价 +{gain} → {value}",
+                name=wn,
+                gain=_fmt(win_inc),
+                value=_fmt(winner["value"]),
+            )
+            + "\n"
+            + self.t(
+                "ui_arena_loser_value",
+                "{name} 身价 -{loss} → {value}",
+                name=ln,
+                loss=_fmt(actual_dec),
+                value=_fmt(loser["value"]),
+            )
+            + "\n"
+            + self.t(
+                "ui_arena_fee",
+                "你支付报名费 {fee} 金币，获得奖励 {reward} 金币",
+                fee=fee,
+                reward=reward,
+            )
+            + "\n"
+            + self.t(
+                "ui_arena_record",
+                "战绩：{wins} 胜 {losses} 负",
+                wins=data["battleStats"]["wins"],
+                losses=data["battleStats"]["losses"],
+            )
         )
         return R(
             tmpl="arena",
@@ -111,7 +177,7 @@ class _ArenaMixin:
                 "loser": ln,
                 "win_inc": _fmt(win_inc),
                 "winner_value": _fmt(winner["value"]),
-                "lose_dec": _fmt(lose_dec),
+                "lose_dec": _fmt(actual_dec),
                 "loser_value": _fmt(loser["value"]),
                 "fee": fee,
                 "reward": reward,

@@ -409,6 +409,46 @@ def rotate_password(
     return st
 
 
+_ARGON2_PREFIXES = ("$argon2id$", "$argon2i$", "$argon2d$")
+
+
+def is_argon2_hash(value: str) -> bool:
+    """value 是否形如 Argon2 哈希串（配置里以哈希形态存密码时用于识别）。"""
+    v = str(value or "").strip()
+    return v.startswith(_ARGON2_PREFIXES)
+
+
+def set_password_hash(
+    store: PasswordStore,
+    hash_str: str,
+    *,
+    must_reset: bool = False,
+) -> dict:
+    """直接把一份 Argon2id 哈希装入密码存储（不走明文）。
+
+    供「配置里以哈希形态保存 webui_password」的路径使用：面板改密后把新哈希
+    写回配置，启动引导再把配置哈希同步到磁盘——两条路径都不经手明文。
+    哈希串自身包含盐与参数，复制它是安全的；格式不对则拒绝（防止把垃圾值
+    写成永久无法登录的状态）。
+    """
+    h = str(hash_str or "").strip()
+    if not is_argon2_hash(h):
+        raise AuthError("不是合法的 Argon2 哈希串，拒绝写入密码存储")
+    now = int(time.time())
+    st = store.get() or {}
+    st.update(
+        {
+            "hash": h,
+            "created_at": now,
+            "rotated_at": st.get("rotated_at", now),
+            "must_reset": bool(must_reset),
+            "version": 1,
+        }
+    )
+    store.save(st)
+    return st
+
+
 __all__ = [
     "Argon2Hasher",
     "AuthError",
@@ -416,5 +456,7 @@ __all__ = [
     "JWTIssuer",
     "PasswordStore",
     "SessionStore",
+    "is_argon2_hash",
     "rotate_password",
+    "set_password_hash",
 ]

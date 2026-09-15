@@ -52,6 +52,7 @@ OVERRIDE_DIR = "overrides"
 TEXT_FILES: dict[str, str] = {
     "workCopywriting": "data",
     "gameTexts": "data",
+    "uiTexts": "data",
     "help": "texts",
 }
 
@@ -91,6 +92,15 @@ _DEFAULT_COPYWRITING: dict[str, dict] = {
         "ranking_events": [{"name": "天气晴朗", "effect": 1.1, "desc": "状态绝佳"}],
         "ranking_tiers": [[1000, "青铜"]],
         "ranking_top_tier": "钻石",
+    },
+    # 交互回复与模板文案（svc 层 ui_text(key, default) / 模板 {{ t.键 }}）。
+    # 键值全部是字符串；这里只登记类型锚点，正本在 resources/data/uiTexts.json，
+    # uiTexts.json 缺失时由代码内置 default 兜底（两边由 lint 测试核对一致）。
+    "uiTexts.json": {
+        "ui_unknown_user": "用户{uid}",
+        "ui_unit_hour": "小时",
+        "ui_unit_minute": "分",
+        "ui_unit_second": "秒",
     },
 }
 

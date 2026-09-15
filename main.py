@@ -30,7 +30,9 @@ from .core.auth import (
     AuthError,
     AuthUnavailable,
     PasswordStore,
+    is_argon2_hash,
     rotate_password,
+    set_password_hash,
 )
 from .core.context import VERSION, GameCtx
 from .core.texts import load_copywriting
@@ -110,14 +112,22 @@ class SlaveMarket(Star):
         优先级：配置里显式设了 webui_password → 直接以其建哈希（must_reset=False）；
         否则生成随机临时密码并标记 must_reset=True。
 
+        webui_password 支持两种形态：
+          - 明文（运维手工填）：按下方原逻辑建哈希；
+          - `$argon2...` 哈希（面板改密后自动写回的形态）：直接把该哈希装入
+            密码存储，全程不经手明文——面板改密写入的哈希在重启后依然生效，
+            且明文不再落盘。
+
         密码元数据已存在（admin_passwd.json 里有 hash）时，**不能静默忽略配置里的
         webui_password**：常见流程是"先在环回跑过一次拿到临时密码 → 之后到 AstrBot
         配置里填 webui_password"，旧实现直接 return，用户配置的密码永不生效，
         面板还会在首次登录后强制改密，等于把自己锁在门外。现在的语义：
 
           - 配置为空 → 什么都不做（保持既有哈希）。
-          - 配置明文与既有哈希匹配 → 什么都不做。
-          - 不匹配 → 用配置明文轮换哈希（must_reset=False）并记一条 info。
+          - 配置（明文或哈希）与既有哈希等价（明文可验证通过 / 哈希串相同）→
+            什么都不做。
+          - 不一致 → 用配置的明文轮换哈希、或把配置的哈希装入存储
+            （must_reset=False）并记一条 info。
 
         生成位置：
           - 临时明文（仅临时密码路径）：data/plugin_data/<name>/admin_passwd.txt（仅出现一次）
@@ -133,6 +143,20 @@ class SlaveMarket(Star):
         )
         configured = str((self.config or {}).get("webui_password", "") or "")
         existing = store.get()
+        # 配置里是哈希形态（面板改密写回的）：以哈希对哈希，不经手明文
+        if is_argon2_hash(configured):
+            if existing and existing.get("hash") == configured.strip():
+                return
+            try:
+                set_password_hash(store, configured, must_reset=False)
+            except AuthError as e:
+                logger.error(f"[奴隶市场] 配置里的密码哈希无法生效：{e}")
+                return
+            logger.info(
+                "[奴隶市场] 磁盘上的 WebUI 密码哈希与配置里的 webui_password "
+                "（哈希形态）不一致，已按配置同步（配置项从此生效）"
+            )
+            return
         if existing and existing.get("hash"):
             if not configured:
                 return
@@ -144,9 +168,12 @@ class SlaveMarket(Star):
             except AuthError as e:
                 logger.error(f"[奴隶市场] 按配置重置 WebUI 密码失败：{e}")
                 return
+            # 按配置重置成功后立即把配置里的明文替换为哈希：明文不再留在
+            # 配置文件里，下次重启走上面的哈希分支
+            self._replace_config_password_with_hash(store)
             logger.info(
                 "[奴隶市场] 磁盘上的 WebUI 密码哈希与配置里的 webui_password "
-                "不一致，已按配置重置（配置项从此生效）"
+                "不一致，已按配置重置；配置项已替换为哈希形态（明文不再落盘）"
             )
             return
         # 配置里显式设过 webui_password：直接以它建哈希（无需改密），
@@ -162,6 +189,7 @@ class SlaveMarket(Star):
             except AuthError as e:
                 logger.error(f"[奴隶市场] 写入配置密码失败：{e}")
                 return
+            self._replace_config_password_with_hash(store)
             return
         # 未设配置密码：生成临时明文密码，18 字符，URL-safe base64
         temp = secrets.token_urlsafe(12)
@@ -198,6 +226,40 @@ class SlaveMarket(Star):
             "  请立即登录并将密码改为你自己的。\n"
             "[奴隶市场] ========================================"
         )
+
+    def _replace_config_password_with_hash(self, store: PasswordStore) -> None:
+        """把配置里的 webui_password 从明文替换为当前哈希（尽力而为）。
+
+        替换失败不影响本次启动：只影响"配置里残留一份明文"，会记 warning。
+        """
+        st = store.get() or {}
+        new_hash = str(st.get("hash") or "")
+        if not new_hash:
+            return
+        cfg = self.config or {}
+        if not hasattr(cfg, "__setitem__"):
+            return
+        try:
+            import inspect
+
+            cfg["webui_password"] = new_hash
+            save = getattr(cfg, "save_config", None)
+            if callable(save):
+                if inspect.iscoroutinefunction(save):
+                    # 本方法整体跑在 to_thread 里，无法 await 异步 save_config；
+                    # 宁可留下明文并明说，也不能悄悄丢一个未消费的 coroutine
+                    logger.warning(
+                        "[奴隶市场] 配置对象的 save_config 是异步函数，"
+                        "无法在启动引导中持久化；配置文件中仍保留明文，"
+                        "请手工把 webui_password 替换为 admin_passwd.json 里的哈希"
+                    )
+                else:
+                    save()
+        except Exception as e:  # noqa: BLE001 - 只影响明文残留，不阻断启动
+            logger.warning(
+                f"[奴隶市场] 配置项 webui_password 未能替换为哈希形态（{e}）；"
+                "配置文件中仍保留明文，建议手工清除"
+            )
 
     def _disk_password_state(self) -> tuple[bool, bool]:
         """磁盘上的 WebUI 密码状态 -> (是否有哈希, 是否仍是待改的临时密码)。

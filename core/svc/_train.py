@@ -23,7 +23,7 @@ class _TrainMixin:
         if left > 0:
             return {
                 "name": name,
-                "result": "休息中",
+                "result": self.t("ui_train_rest", "休息中"),
                 "ok": None,
                 "cost": 0,
                 "detail": _cd_text(left),
@@ -32,10 +32,12 @@ class _TrainMixin:
         if data["currency"] < cost:
             return {
                 "name": name,
-                "result": "金币不足",
+                "result": self.t("ui_gold_short", "金币不足"),
                 "ok": False,
                 "cost": 0,
-                "detail": f"需要 {_fmt(cost)} 金币",
+                "detail": self.t(
+                    "ui_train_need", "需要 {cost} 金币", cost=_fmt(cost)
+                ),
             }
 
         data["currency"] = round(data["currency"] - cost, 2)
@@ -45,17 +47,25 @@ class _TrainMixin:
             slave["value"] = round(slave["value"] + inc, 2)
             return {
                 "name": name,
-                "result": "训练成功",
+                "result": self.t("ui_train_ok", "训练成功"),
                 "ok": True,
                 "cost": cost,
-                "detail": f"消耗 {_fmt(cost)}，身价 +{_fmt(inc)} → {_fmt(slave['value'])}",
+                "detail": self.t(
+                    "ui_train_gain",
+                    "消耗 {cost}，身价 +{gain} → {value}",
+                    cost=_fmt(cost),
+                    gain=_fmt(inc),
+                    value=_fmt(slave["value"]),
+                ),
             }
         return {
             "name": name,
-            "result": "训练失败",
+            "result": self.t("ui_train_fail", "训练失败"),
             "ok": False,
             "cost": cost,
-            "detail": f"消耗 {_fmt(cost)}，身价未提升",
+            "detail": self.t(
+                "ui_train_nogain", "消耗 {cost}，身价未提升", cost=_fmt(cost)
+            ),
         }
 
     async def train(
@@ -68,7 +78,9 @@ class _TrainMixin:
     def _train(self, tx, user_id: str, nickname: str, target: str) -> dict:
         data = tx.get(user_id, nickname)
         if not self._owns(data, target):
-            return notice("🚫", "你不是该奴隶的主人", [], tone="warn")
+            return notice(
+                "🚫", self.t("ui_not_owner", "你不是该奴隶的主人"), [], tone="warn"
+            )
         r = self._train_one(tx, user_id, data, str(target), _now())
         return R(
             tmpl="train",
@@ -84,17 +96,29 @@ class _TrainMixin:
     def _train_all(self, tx, user_id: str, nickname: str) -> dict:
         data = tx.get(user_id, nickname)
         if not data["slave"]:
-            return notice("🚫", "你还没有奴隶可以训练", [], tone="warn")
+            return notice(
+                "🚫",
+                self.t("ui_train_noslave", "你还没有奴隶可以训练"),
+                [],
+                tone="warn",
+            )
         now = _now()
         results = [
             self._train_one(tx, user_id, data, str(sid), now)
             for sid in list(data["slave"])
         ]
-        ok = sum(1 for r in results if r["result"] == "训练成功")
+        ok = sum(1 for r in results if r["ok"] is True)
         spent = sum(r["cost"] for r in results)
         text = (
-            f"🎯 一键训练完成（成功 {ok}/{len(results)}，总花费 {_fmt(spent)}，"
-            f"当前余额 {_fmt(data['currency'])}）\n"
+            self.t(
+                "ui_train_all_head",
+                "🎯 一键训练完成（成功 {ok}/{total}，总花费 {spent}，当前余额 {balance}）",
+                ok=ok,
+                total=len(results),
+                spent=_fmt(spent),
+                balance=_fmt(data["currency"]),
+            )
+            + "\n"
             + "\n".join(
                 f"• {r['name']}：{r['result']}（{r['detail']}）" for r in results
             )

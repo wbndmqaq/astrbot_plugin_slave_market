@@ -32,24 +32,24 @@ h1{font-size:24px;letter-spacing:5px;color:#8c3b2e;margin-top:5px}
 <body>
   <div class="hdr">
     <div class="icon">💼</div>
-    <h1>打 工 结 算</h1>
+    <h1>{{ t.work_title }}</h1>
   </div>
   {% if mode == "solo" %}
   <div class="story">{{ story }}</div>
   <div class="settle">
-    <div class="box"><div class="v">+{{ wages }}</div><div class="k">本次收入（金币）</div></div>
-    <div class="box"><div class="v">{{ balance }}</div><div class="k">当前余额（金币）</div></div>
+    <div class="box"><div class="v">+{{ wages }}</div><div class="k">{{ t.income_this }}</div></div>
+    <div class="box"><div class="v">{{ balance }}</div><div class="k">{{ t.balance_gold }}</div></div>
   </div>
   {% else %}
   <div class="settle">
-    <div class="box"><div class="v">+{{ wages }}</div><div class="k">总收入（金币）</div></div>
-    <div class="box"><div class="v">{{ balance }}</div><div class="k">当前余额（金币）</div></div>
+    <div class="box"><div class="v">+{{ wages }}</div><div class="k">{{ t.income_total }}</div></div>
+    <div class="box"><div class="v">{{ balance }}</div><div class="k">{{ t.balance_gold }}</div></div>
   </div>
   {% for l in lines or [] %}
-  <div class="line"><b>【{{ l.name }}】</b>{{ l.story }}{% if l.income and l.income != '0' %}<span class="inc"> +{{ l.income }} 金币</span>{% endif %}</div>
+  <div class="line"><b>【{{ l.name }}】</b>{{ l.story }}{% if l.income and l.income != '0' %}<span class="inc"> +{{ l.income }} {{ t.gold }}</span>{% endif %}</div>
   {% endfor %}
-  {% if expense %}<div class="expense">💸 意外事件：{{ expense }}</div>{% endif %}
+  {% if expense %}<div class="expense">{{ t.expense_label }}{{ expense }}</div>{% endif %}
   {% endif %}
-  <div class="foot">— 奴隶市场 · {{ plugin_version or "" }} —</div>
+  <div class="foot">— {{ t.brand }} · {{ plugin_version or "" }} —</div>
 </body>
 </html>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from ..db._const import _VALUE_DEFAULT
 from ..result import R
 from ._const import BOARD_LIMIT, FULL_SCAN_CAP, MARKET_LIMIT, _fmt
 
@@ -33,26 +34,67 @@ class _BoardMixin:
                 }
             )
         info = {
-            "nickname": data.get("nickname") or nickname or f"用户{user_id}",
+            "nickname": data.get("nickname")
+            or nickname
+            or self.t("ui_unknown_user", "用户{uid}", uid=user_id),
             "uid": str(user_id),
             "currency": _fmt(data["currency"]),
             "value": _fmt(data["value"]),
             "slave_count": len(slaves),
-            "master": master_name or "无",
+            "master": master_name or self.t("ui_no_owner", "无"),
             "slaves": slaves[:MARKET_LIMIT],
             "slaves_truncated": len(slaves) > MARKET_LIMIT,
             "wins": data["battleStats"]["wins"],
             "losses": data["battleStats"]["losses"],
         }
+        # 模板用的组合行（含数值）在服务层拼好，模板不写死文案与数字
+        info["title"] = self.t(
+            "tpl_myslave_title", "{name} 的奴籍账册", name=info["nickname"]
+        )
+        info["truncated_note"] = self.t(
+            "tpl_myslave_truncated", "（奴隶过多，仅展示前 {limit}）", limit=MARKET_LIMIT
+        )
         text = (
-            f"# {info['nickname']} 的基础信息\n"
-            f"金币：{info['currency']}｜身价：{info['value']}\n"
-            f"拥有奴隶：{info['slave_count']} 个｜主人：{info['master']}\n"
-            f"决斗战绩：{info['wins']} 胜 {info['losses']} 负"
+            self.t(
+                "ui_myslave_head", "# {name} 的基础信息", name=info["nickname"]
+            )
+            + "\n"
+            + self.t(
+                "ui_myslave_money",
+                "金币：{currency}｜身价：{value}",
+                currency=info["currency"],
+                value=info["value"],
+            )
+            + "\n"
+            + self.t(
+                "ui_myslave_slaves",
+                "拥有奴隶：{count} 个｜主人：{master}",
+                count=info["slave_count"],
+                master=info["master"],
+            )
+            + "\n"
+            + self.t(
+                "ui_myslave_record",
+                "决斗战绩：{wins} 胜 {losses} 负",
+                wins=info["wins"],
+                losses=info["losses"],
+            )
         )
         if slaves:
-            text += "\n奴隶列表：\n" + "\n".join(
-                f"• {s['name']}（{s['id']}）身价 {s['value']}" for s in info["slaves"]
+            text += (
+                "\n"
+                + self.t("ui_myslave_list_head", "奴隶列表：")
+                + "\n"
+                + "\n".join(
+                    self.t(
+                        "ui_myslave_row",
+                        "• {name}（{id}）身价 {value}",
+                        name=s["name"],
+                        id=s["id"],
+                        value=s["value"],
+                    )
+                    for s in info["slaves"]
+                )
             )
         return R(tmpl="myslave", data=info, text=text)
 
@@ -77,13 +119,14 @@ class _BoardMixin:
             )
             for uid, p in extra:
                 names[uid] = self._name(p, uid)
+        no_owner = self.t("ui_no_owner", "无")
         items = []
         for uid, p in rows:
             master_id = p.get("master") or ""
             if master_id:
-                master_name = names.get(master_id) or "无"
+                master_name = names.get(master_id) or no_owner
             else:
-                master_name = "无"
+                master_name = no_owner
             items.append(
                 {
                     "id": uid,
@@ -92,13 +135,42 @@ class _BoardMixin:
                     "master": master_name,
                 }
             )
-        text = f"🛒 奴隶市场（共 {total} 人）\n" + "\n".join(
-            f"{i}. {it['name']}（{it['id']}）身价 {it['value']}｜主人：{it['master']}"
-            for i, it in enumerate(items, 1)
+        text = (
+            self.t(
+                "ui_market_head", "🛒 奴隶市场（共 {total} 人）", total=total
+            )
+            + "\n"
+            + "\n".join(
+                self.t(
+                    "ui_market_row",
+                    "{rank}. {name}（{id}）身价 {value}｜主人：{master}",
+                    rank=i,
+                    name=it["name"],
+                    id=it["id"],
+                    value=it["value"],
+                    master=it["master"],
+                )
+                for i, it in enumerate(items, 1)
+            )
         )
-        return R(tmpl="market", data={"items": items, "total": total}, text=text)
+        return R(
+            tmpl="market",
+            data={
+                "items": items,
+                "total": total,
+                # 副标题含默认身价数值：在服务层用文案表拼好，模板不再写死数字
+                "sub": self.t(
+                    "tpl_market_sub",
+                    "共 {total} 人在册 · 未出场过的身价均为 {value}",
+                    total=total,
+                    value=int(_VALUE_DEFAULT),
+                ),
+            },
+            text=text,
+        )
 
     # 排行榜类型 -> (排序列, 展示标题)
+    # 榜单标题默认值保留在这里；uiTexts 里可用键 ui_board_title_<kind> 覆盖
     _BOARDS: ClassVar[dict[str, tuple[str, str]]] = {
         "currency": ("currency", "金币排行榜"),
         "value": ("value", "身价排行榜"),
@@ -112,7 +184,8 @@ class _BoardMixin:
         """kind: currency / value / slave / bank"""
         if kind not in self._BOARDS:
             kind = "currency"
-        col, title = self._BOARDS[kind]
+        col, title_default = self._BOARDS[kind]
+        title = self.t("ui_board_title_" + kind, title_default)
         if kind in ("slave", "bank"):
             # 全量扫描：按 uid/level 预截断会采到错误样本——uid 倒序前 N 与
             # "奴隶最多"无关，level 前 15 会挤掉同级但余额更高的玩家。
@@ -153,15 +226,37 @@ class _BoardMixin:
             if kind == "value":
                 return f"{_fmt(e['value'])} 💎"
             if kind == "slave":
-                return f"{e['slave_count']} 个"
-            return f"Lv.{e['bank_level']}（{_fmt(e['bank_balance'])}）"
+                return self.t("ui_board_slave_count", "{count} 个", count=e["slave_count"])
+            return self.t(
+                "ui_board_bank_level",
+                "Lv.{level}（{balance}）",
+                level=e["bank_level"],
+                balance=_fmt(e["bank_balance"]),
+            )
 
         board = [
             {"rank": i + 1, "name": e["name"], "id": e["id"], "score": _score(e)}
             for i, e in enumerate(entries)
         ]
-        text = f"🏆 {title}（前 {len(board)} 名）\n" + "\n".join(
-            f"{r['rank']}. {r['name']}（{r['id']}）- {r['score']}" for r in board
+        text = (
+            self.t(
+                "ui_board_head",
+                "🏆 {title}（前 {count} 名）",
+                title=title,
+                count=len(board),
+            )
+            + "\n"
+            + "\n".join(
+                self.t(
+                    "ui_board_row",
+                    "{rank}. {name}（{id}）- {score}",
+                    rank=r["rank"],
+                    name=r["name"],
+                    id=r["id"],
+                    score=r["score"],
+                )
+                for r in board
+            )
         )
         return R(tmpl="ranking", data={"title": title, "rows": board}, text=text)
 
